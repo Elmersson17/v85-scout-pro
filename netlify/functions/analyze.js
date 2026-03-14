@@ -1,7 +1,3 @@
-// V85 Scout Pro – Netlify Serverless Function
-// Hämtar data från ATG:s publika API, beräknar analyser och returnerar JSON
-// Inga externa dependencies – använder Node 18 inbyggd fetch
-
 const ATG = 'https://www.atg.se/services/racinginfo/v1/api';
 
 exports.handler = async function(event, context) {
@@ -10,70 +6,47 @@ exports.handler = async function(event, context) {
     'Access-Control-Allow-Headers': 'Content-Type',
     'Content-Type': 'application/json; charset=utf-8',
   };
-
-  if (event.httpMethod === 'OPTIONS') {
-    return { statusCode: 204, headers: headers, body: '' };
-  }
+  if (event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: headers, body: '' };
 
   try {
     var raw = (event.queryStringParameters || {}).game || '';
-    if (!raw.trim()) {
-      return reply(400, { error: 'Ange ett spel-ID, t.ex. V85_2026-03-15 eller bara ett datum som 2026-03-15' }, headers);
-    }
-
+    if (!raw.trim()) return reply(400, { error: 'Ange t.ex. V85 eller V85_2026-03-14' }, headers);
     raw = raw.trim();
 
-    // Steg 1: Hitta ratt game ID
+    // STEG 1: Hitta game ID via products/V85
     var gameId = await resolveGameId(raw);
-    if (!gameId) {
-      return reply(404, { error: 'Kunde inte hitta V85-spel for: ' + raw + '. Testa med ett lordagsdatum.' }, headers);
-    }
+    if (!gameId) return reply(404, { error: 'Hittade inget V85-spel for: ' + raw }, headers);
+    console.log('[V85] Game ID:', gameId);
 
-    console.log('[V85] Resolved game ID:', gameId);
-
-    // Steg 2: Hamta spelinfo
+    // STEG 2: Hamta speldata
     var gameData = await apiFetch(ATG + '/games/' + gameId);
-    if (!gameData || (!gameData.races && !gameData.tracks)) {
-      return reply(404, { error: 'Hittade inget spel med ID: ' + gameId }, headers);
+    if (!gameData || !gameData.races || !gameData.races.length) {
+      return reply(404, { error: 'Inga lopp i spelet: ' + gameId }, headers);
     }
 
-    // Steg 3: Hamta varje lopp parallellt
-    var raceIds = (gameData.races || []).map(function(r) { return r.id || r.raceId; }).filter(Boolean);
-
-    if (!raceIds.length) {
-      return reply(404, { error: 'Spelet har inga lopp annu.' }, headers);
-    }
-
-    var racePromises = raceIds.map(function(id) {
-      return apiFetch(ATG + '/races/' + id).catch(function() { return null; });
+    // STEG 3: Hamta varje lopp
+    var racePromises = gameData.races.map(function(r) {
+      var rid = r.id || r.raceId;
+      if (!rid) return Promise.resolve(null);
+      return apiFetch(ATG + '/races/' + rid).catch(function() { return null; });
     });
     var raceResults = await Promise.all(racePromises);
 
-    // Steg 4: Bearbeta lopp
+    // STEG 4: Bearbeta
     var races = [];
     for (var i = 0; i < raceResults.length; i++) {
       if (!raceResults[i]) continue;
-      try {
-        races.push(processRace(raceResults[i]));
-      } catch (e) {
-        console.log('[V85] Skippar lopp:', e.message);
-      }
+      try { races.push(processRace(raceResults[i])); } catch (e) { console.log('[V85] Skip race:', e.message); }
     }
+    if (!races.length) return reply(500, { error: 'Kunde inte bearbeta loppdata.' }, headers);
 
-    if (!races.length) {
-      return reply(500, { error: 'Kunde inte bearbeta loppdata.' }, headers);
-    }
-
-    // Steg 5: Returnera
     var trackName = '';
     if (gameData.tracks && gameData.tracks.length) trackName = gameData.tracks[0].name || '';
     if (!trackName && races.length) trackName = races[0].track || '';
 
     return reply(200, {
-      gameId: gameId,
-      track: trackName,
-      date: extractDate(gameId),
-      races: races,
+      gameId: gameId, track: trackName,
+      date: extractDate(gameId), races: races,
       fetchedAt: new Date().toISOString()
     }, headers);
 
@@ -83,89 +56,47 @@ exports.handler = async function(event, context) {
   }
 };
 
+// ═══════════════════════════════════════
+// RESOLVE GAME ID
+// ═══════════════════════════════════════
 async function resolveGameId(raw) {
-  // Om det redan ar ett komplett game-ID med track-nummer
+  // Om redan komplett: V85_2026-03-14_78_5
   var full = raw.match(/(V8[56]_\d{4}-\d{2}-\d{2}_\d+_\d+)/i);
   if (full) return full[1];
 
-  // Extrahera datum
-  var dateMatch = raw.match(/(\d{4}-\d{2}-\d{2})/);
-  if (!dateMatch) {
-    // Bara "V85" - hamta nasta/senaste
-    try {
-      var product = await apiFetch(ATG + '/products/V85');
-      if (product && product.currentGame) return product.currentGame.id;
-      if (product && product.nextGame) return product.nextGame.id;
-    } catch (e) {}
-    return null;
-  }
-
-  var date = dateMatch[1];
-
-  // Prova calendar-API for att hitta ratt game-ID
-  try {
-    var calUrl = ATG + '/calendar/day/' + date;
-    console.log('[V85] Calendar:', calUrl);
-    var cal = await apiFetch(calUrl);
-
-    if (cal && cal.games) {
-      var v85games = cal.games.V85 || cal.games.v85 || [];
-      if (v85games.length > 0) {
-        return v85games[0].id || v85games[0];
-      }
-      for (var key in cal.games) {
-        if (key.toUpperCase().indexOf('V85') !== -1) {
-          var arr = cal.games[key];
-          if (Array.isArray(arr) && arr.length > 0) {
-            return arr[0].id || arr[0];
-          }
-        }
-      }
-    }
-
-    if (cal && cal.tracks) {
-      for (var t = 0; t < cal.tracks.length; t++) {
-        var track = cal.tracks[t];
-        var tGames = track.games || [];
-        for (var g = 0; g < tGames.length; g++) {
-          var gid = tGames[g].id || '';
-          if (gid.toUpperCase().indexOf('V85') !== -1) {
-            return gid;
-          }
-        }
-      }
-    }
-  } catch (e) {
-    console.log('[V85] Calendar fetch failed:', e.message);
-  }
-
-  // Prova products-endpointen
+  // Hamta products/V85 och leta i upcoming[]
   try {
     var prod = await apiFetch(ATG + '/products/V85');
-    if (prod) {
-      if (prod.currentGame && prod.currentGame.id && prod.currentGame.id.indexOf(date) !== -1) {
-        return prod.currentGame.id;
-      }
-      if (prod.nextGame && prod.nextGame.id && prod.nextGame.id.indexOf(date) !== -1) {
-        return prod.nextGame.id;
-      }
-      if (prod.currentGame && prod.currentGame.id) {
-        return prod.currentGame.id;
+    if (!prod) return null;
+
+    var upcoming = prod.upcoming || [];
+
+    // Extrahera datum fran input
+    var dateMatch = raw.match(/(\d{4}-\d{2}-\d{2})/);
+
+    if (dateMatch) {
+      // Matcha datum mot upcoming
+      var date = dateMatch[1];
+      for (var i = 0; i < upcoming.length; i++) {
+        if (upcoming[i].id && upcoming[i].id.indexOf(date) !== -1) {
+          return upcoming[i].id;
+        }
       }
     }
+
+    // Inget datum angivet eller ingen match - ta forsta upcoming
+    if (upcoming.length > 0 && upcoming[0].id) {
+      return upcoming[0].id;
+    }
+
+    // Prova results/previousResults om det finns
+    var results = prod.results || prod.previousResults || [];
+    if (results.length > 0 && results[0].id) {
+      return results[0].id;
+    }
+
   } catch (e) {
     console.log('[V85] Products fetch failed:', e.message);
-  }
-
-  // Sista fallback: testa vanliga ID-format direkt
-  var formats = ['V85_' + date + '_1', 'V85_' + date + '_1_1'];
-  for (var f = 0; f < formats.length; f++) {
-    try {
-      var test = await fetch(ATG + '/games/' + formats[f], {
-        headers: { 'Accept': 'application/json' }
-      });
-      if (test.ok) return formats[f];
-    } catch (e) {}
   }
 
   return null;
@@ -174,14 +105,9 @@ async function resolveGameId(raw) {
 async function apiFetch(url) {
   console.log('[V85] GET', url);
   var res = await fetch(url, {
-    headers: {
-      'Accept': 'application/json',
-      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-    }
+    headers: { 'Accept': 'application/json', 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' }
   });
-  if (!res.ok) {
-    throw new Error('ATG ' + res.status + ' ' + res.statusText + ' for ' + url);
-  }
+  if (!res.ok) throw new Error('ATG ' + res.status + ' for ' + url);
   return res.json();
 }
 
@@ -190,22 +116,18 @@ function extractDate(gameId) {
   return m ? m[1] : '';
 }
 
+// ═══════════════════════════════════════
+// PROCESS RACE
+// ═══════════════════════════════════════
 function processRace(race) {
   var starts = race.starts || [];
   var horses = [];
-
   for (var i = 0; i < starts.length; i++) {
-    try {
-      horses.push(processHorse(starts[i], race));
-    } catch (e) {
-      console.log('[V85] Skippar hast:', e.message);
-    }
+    try { horses.push(processHorse(starts[i], race)); } catch (e) {}
   }
-
   var insights = calcInsights(horses);
   var scoutAnalysis = buildScoutText(horses, insights, race);
   markPicks(horses);
-
   return {
     raceNumber: race.number || 0,
     name: race.name || ('Lopp ' + (race.number || '?')),
@@ -213,9 +135,7 @@ function processRace(race) {
     distance: race.distance || null,
     startMethod: race.startMethod === 'auto' ? 'auto' : 'volt',
     startTime: race.startTime || race.scheduledStartTime || null,
-    scoutAnalysis: scoutAnalysis,
-    horses: horses,
-    insights: insights
+    scoutAnalysis: scoutAnalysis, horses: horses, insights: insights
   };
 }
 
@@ -225,14 +145,12 @@ function processHorse(start, race) {
   var trainerRaw = horse.trainer || start.trainer || {};
   var pools = start.pools || {};
 
+  // Odds
   var winOdds = null;
   var poolKeys = ['vinnare', 'V85', 'V75', 'V86', 'V65', 'V64', 'V4', 'V3'];
   for (var p = 0; p < poolKeys.length; p++) {
     var pool = pools[poolKeys[p]];
-    if (pool && pool.odds) {
-      winOdds = pool.odds / 100;
-      break;
-    }
+    if (pool && pool.odds) { winOdds = pool.odds / 100; break; }
   }
   if (!winOdds && start.vpOdds) winOdds = start.vpOdds / 100;
 
@@ -245,7 +163,6 @@ function processHorse(start, race) {
   var histPct = histWinPct(horse);
   var implPct = winOdds ? (100 / winOdds) : 0;
   var valueScore = Math.round((histPct - implPct) * 10) / 10;
-
   var frScore = frontRunnerScore(start, race);
   var flags = buildFlags(start, horse, driver, trainer, times, formStr, valueScore);
 
@@ -254,22 +171,11 @@ function processHorse(start, race) {
     name: horse.name || ('Hast ' + start.number),
     winOdds: winOdds,
     postPosition: start.postPosition || start.number,
-    history: {
-      formStr: formStr,
-      avgKmTime10: times.avg,
-      bestKmTime: times.best,
-      timeTrend: times.trend,
-      recentStarts: recentStarts,
-      trackStats: getTrackStats(horse, race.track ? race.track.name : '')
-    },
-    driver: driver,
-    trainer: trainer,
-    flags: flags,
-    valueScore: valueScore,
-    frontRunnerScore: frScore,
+    history: { formStr: formStr, avgKmTime10: times.avg, bestKmTime: times.best, timeTrend: times.trend, recentStarts: recentStarts, trackStats: getTrackStats(horse, race.track ? race.track.name : '') },
+    driver: driver, trainer: trainer, flags: flags,
+    valueScore: valueScore, frontRunnerScore: frScore,
     analysis: horse.raceComment || start.raceComment || '',
-    scoutPick: false,
-    scoutPickType: null
+    scoutPick: false, scoutPickType: null
   };
 }
 
@@ -297,15 +203,7 @@ function getRecentStarts(horse) {
   var out = [];
   for (var i = 0; i < Math.min(7, starts.length); i++) {
     var s = starts[i];
-    out.push({
-      date: s.date || s.raceDate || '',
-      track: (s.track ? s.track.name : s.trackName) || '',
-      distance: s.distance || null,
-      place: s.place || s.finishOrder || null,
-      disk: s.disqualified || s.dq || false,
-      kmTimeRaw: s.kmTime || s.kilometerTime || '',
-      odds: s.odds ? s.odds / 100 : null
-    });
+    out.push({ date: s.date || s.raceDate || '', track: (s.track ? s.track.name : s.trackName) || '', distance: s.distance || null, place: s.place || s.finishOrder || null, disk: s.disqualified || s.dq || false, kmTimeRaw: s.kmTime || s.kilometerTime || '', odds: s.odds ? s.odds / 100 : null });
   }
   return out;
 }
@@ -317,18 +215,12 @@ function getTimes(horse) {
   var times = [];
   for (var i = 0; i < Math.min(10, starts.length); i++) {
     var raw = starts[i].kmTime || starts[i].kilometerTime;
-    if (raw) {
-      var secs = parseKmTime(raw);
-      if (secs > 50 && secs < 100) times.push(secs);
-    }
+    if (raw) { var secs = parseKmTime(raw); if (secs > 50 && secs < 100) times.push(secs); }
   }
   if (!times.length) {
     var rec = horse.records || {};
     var best = rec.bestAutoTime || rec.bestVoltTime;
-    if (best) {
-      var s = parseKmTime(best);
-      if (s > 50 && s < 100) return { avg: s, best: s, trend: 'stable' };
-    }
+    if (best) { var s = parseKmTime(best); if (s > 50 && s < 100) return { avg: s, best: s, trend: 'stable' }; }
     return { avg: null, best: null, trend: 'stable' };
   }
   var sum = 0;
@@ -367,19 +259,12 @@ function personStats(person) {
   var stats = person.statistics || person.stats || {};
   var yearStarts = stats.starts || 0;
   var yearWins = stats.wins || stats.firsts || 0;
-  if (!yearStarts && stats.thisYear) {
-    yearStarts = stats.thisYear.starts || 0;
-    yearWins = stats.thisYear.wins || stats.thisYear.firsts || 0;
-  }
+  if (!yearStarts && stats.thisYear) { yearStarts = stats.thisYear.starts || 0; yearWins = stats.thisYear.wins || stats.thisYear.firsts || 0; }
   var yearPct = yearStarts > 0 ? Math.round(yearWins / yearStarts * 100) : 0;
   var s30 = Math.max(1, Math.round(yearStarts / 12));
   var w30 = Math.round(yearWins / 12);
   var pct30 = s30 > 0 ? Math.round(w30 / s30 * 100) : yearPct;
-  if (stats.last30Days) {
-    s30 = stats.last30Days.starts || s30;
-    w30 = stats.last30Days.wins || w30;
-    pct30 = s30 > 0 ? Math.round(w30 / s30 * 100) : pct30;
-  }
+  if (stats.last30Days) { s30 = stats.last30Days.starts || s30; w30 = stats.last30Days.wins || w30; pct30 = s30 > 0 ? Math.round(w30 / s30 * 100) : pct30; }
   var s14 = Math.max(1, Math.round(s30 / 2));
   var w14 = Math.round(w30 / 2);
   var pct14 = s14 > 0 ? Math.round(w14 / s14 * 100) : pct30;
@@ -399,15 +284,8 @@ function getTrackStats(horse, currentTrack) {
     if ((starts[i].place || starts[i].finishOrder) === 1) map[tn].wins++;
   }
   var arr = [];
-  for (var key in map) {
-    map[key].winPct = map[key].starts > 0 ? Math.round(map[key].wins / map[key].starts * 100) : 0;
-    arr.push(map[key]);
-  }
-  arr.sort(function(a, b) {
-    if (a.track === currentTrack) return -1;
-    if (b.track === currentTrack) return 1;
-    return b.starts - a.starts;
-  });
+  for (var key in map) { map[key].winPct = map[key].starts > 0 ? Math.round(map[key].wins / map[key].starts * 100) : 0; arr.push(map[key]); }
+  arr.sort(function(a, b) { if (a.track === currentTrack) return -1; if (b.track === currentTrack) return 1; return b.starts - a.starts; });
   return arr.slice(0, 5);
 }
 
@@ -419,20 +297,15 @@ function histWinPct(horse) {
   var results = (summary.lastStarts || horse.results || []);
   if (!results.length) return 0;
   var w = 0;
-  for (var i = 0; i < results.length; i++) {
-    if ((results[i].place || results[i].finishOrder) === 1) w++;
-  }
+  for (var i = 0; i < results.length; i++) { if ((results[i].place || results[i].finishOrder) === 1) w++; }
   return Math.round(w / results.length * 100);
 }
 
 function frontRunnerScore(start, race) {
   var score = 0;
   var pos = start.postPosition || start.number;
-  if (race.startMethod === 'auto') {
-    if (pos <= 2) score += 4; else if (pos <= 4) score += 2;
-  } else {
-    if (pos === 1) score += 5; else if (pos === 2) score += 3; else if (pos <= 4) score += 1;
-  }
+  if (race.startMethod === 'auto') { if (pos <= 2) score += 4; else if (pos <= 4) score += 2; }
+  else { if (pos === 1) score += 5; else if (pos === 2) score += 3; else if (pos <= 4) score += 1; }
   var form = getFormString(start.horse || {});
   var vCount = (form.match(/V/g) || []).length;
   score += vCount;
@@ -491,21 +364,21 @@ function buildScoutText(horses, insights, race) {
     if (frH) {
       var sm = race.startMethod === 'auto' ? 'autostart' : 'voltstart';
       var dn = frH.driver ? frH.driver.name : '';
-      parts.push(frH.name + ' (' + frH.nr + ') ser ut att ta spets från ' + sm + (dn ? ' med ' + dn : '') + '.');
+      parts.push(frH.name + ' (' + frH.nr + ') ser ut att ta spets fran ' + sm + (dn ? ' med ' + dn : '') + '.');
     }
   }
   if (tv && (!fr || tv.nr !== fr.nr)) {
     var tvH = horses.find(function(h) { return h.nr === tv.nr; });
-    if (tvH) parts.push(tvH.name + ' (' + tvH.nr + ') sticker ut som värdehäst på odds ' + tvH.winOdds + ' (EV +' + tv.valueScore + '%).');
+    if (tvH) parts.push(tvH.name + ' (' + tvH.nr + ') sticker ut som vardehast pa odds ' + tvH.winOdds + ' (EV +' + tv.valueScore + '%).');
   }
   var missed2 = insights.missedHorses || [];
   if (missed2.length && (!fr || missed2[0].nr !== fr.nr) && (!tv || missed2[0].nr !== tv.nr)) {
-    parts.push('Håll koll på ' + missed2[0].name + ' @ ' + missed2[0].odds + ' – ' + missed2[0].reason + '.');
+    parts.push('Hall koll pa ' + missed2[0].name + ' @ ' + missed2[0].odds + '.');
   }
   var sorted = horses.filter(function(h) { return h.winOdds; }).sort(function(a, b) { return a.winOdds - b.winOdds; });
-  if (sorted.length >= 2 && sorted[0].winOdds < 2.5) parts.push('Tydlig favorit – potentiellt singelläge.');
-  else if (sorted.length >= 2 && sorted[0].winOdds > 4) parts.push('Öppet lopp – gardering rekommenderas.');
-  return parts.join(' ') || 'Jämnt lopp utan tydlig favorit.';
+  if (sorted.length >= 2 && sorted[0].winOdds < 2.5) parts.push('Tydlig favorit – potentiellt singellage.');
+  else if (sorted.length >= 2 && sorted[0].winOdds > 4) parts.push('Oppet lopp – gardering rekommenderas.');
+  return parts.join(' ') || 'Jamnt lopp utan tydlig favorit.';
 }
 
 function markPicks(horses) {
