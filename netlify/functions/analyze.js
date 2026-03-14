@@ -13,30 +13,20 @@ exports.handler = async function(event, context) {
     if (!raw.trim()) return reply(400, { error: 'Ange t.ex. V85 eller V85_2026-03-14' }, headers);
     raw = raw.trim();
 
-    // STEG 1: Hitta game ID via products/V85
     var gameId = await resolveGameId(raw);
     if (!gameId) return reply(404, { error: 'Hittade inget V85-spel for: ' + raw }, headers);
     console.log('[V85] Game ID:', gameId);
 
-    // STEG 2: Hamta speldata
+    // Hamta GAMES-endpointen (har pooler + lopp + hastar)
     var gameData = await apiFetch(ATG + '/games/' + gameId);
     if (!gameData || !gameData.races || !gameData.races.length) {
       return reply(404, { error: 'Inga lopp i spelet: ' + gameId }, headers);
     }
 
-    // STEG 3: Hamta varje lopp
-    var racePromises = gameData.races.map(function(r) {
-      var rid = r.id || r.raceId;
-      if (!rid) return Promise.resolve(null);
-      return apiFetch(ATG + '/races/' + rid).catch(function() { return null; });
-    });
-    var raceResults = await Promise.all(racePromises);
-
-    // STEG 4: Bearbeta
+    // Bearbeta lopp direkt fran games-svaret
     var races = [];
-    for (var i = 0; i < raceResults.length; i++) {
-      if (!raceResults[i]) continue;
-      try { races.push(processRace(raceResults[i])); } catch (e) { console.log('[V85] Skip race:', e.message); }
+    for (var i = 0; i < gameData.races.length; i++) {
+      try { races.push(processRace(gameData.races[i])); } catch (e) { console.log('[V85] Skip race:', e.message); }
     }
     if (!races.length) return reply(500, { error: 'Kunde inte bearbeta loppdata.' }, headers);
 
@@ -60,45 +50,24 @@ exports.handler = async function(event, context) {
 // RESOLVE GAME ID
 // ═══════════════════════════════════════
 async function resolveGameId(raw) {
-  // Om redan komplett: V85_2026-03-14_78_5
   var full = raw.match(/(V8[56]_\d{4}-\d{2}-\d{2}_\d+_\d+)/i);
   if (full) return full[1];
 
-  // Hamta products/V85 och leta i upcoming[]
   try {
     var prod = await apiFetch(ATG + '/products/V85');
     if (!prod) return null;
-
     var upcoming = prod.upcoming || [];
-
-    // Extrahera datum fran input
     var dateMatch = raw.match(/(\d{4}-\d{2}-\d{2})/);
-
     if (dateMatch) {
-      // Matcha datum mot upcoming
       var date = dateMatch[1];
       for (var i = 0; i < upcoming.length; i++) {
-        if (upcoming[i].id && upcoming[i].id.indexOf(date) !== -1) {
-          return upcoming[i].id;
-        }
+        if (upcoming[i].id && upcoming[i].id.indexOf(date) !== -1) return upcoming[i].id;
       }
     }
-
-    // Inget datum angivet eller ingen match - ta forsta upcoming
-    if (upcoming.length > 0 && upcoming[0].id) {
-      return upcoming[0].id;
-    }
-
-    // Prova results/previousResults om det finns
-    var results = prod.results || prod.previousResults || [];
-    if (results.length > 0 && results[0].id) {
-      return results[0].id;
-    }
-
+    if (upcoming.length > 0 && upcoming[0].id) return upcoming[0].id;
   } catch (e) {
     console.log('[V85] Products fetch failed:', e.message);
   }
-
   return null;
 }
 
@@ -117,13 +86,13 @@ function extractDate(gameId) {
 }
 
 // ═══════════════════════════════════════
-// PROCESS RACE
+// PROCESS RACE (from games endpoint)
 // ═══════════════════════════════════════
 function processRace(race) {
   var starts = race.starts || [];
   var horses = [];
   for (var i = 0; i < starts.length; i++) {
-    try { horses.push(processHorse(starts[i], race)); } catch (e) {}
+    try { horses.push(processHorse(starts[i], race)); } catch (e) { console.log('[V85] Skip horse:', e.message); }
   }
   var insights = calcInsights(horses);
   var scoutAnalysis = buildScoutText(horses, insights, race);
@@ -133,199 +102,202 @@ function processRace(race) {
     name: race.name || ('Lopp ' + (race.number || '?')),
     track: race.track ? (race.track.name || '') : '',
     distance: race.distance || null,
-    startMethod: race.startMethod === 'auto' ? 'auto' : 'volt',
+    startMethod: (race.startMethod || '').toLowerCase() === 'auto' ? 'auto' : 'volt',
     startTime: race.startTime || race.scheduledStartTime || null,
     scoutAnalysis: scoutAnalysis, horses: horses, insights: insights
   };
 }
 
+// ═══════════════════════════════════════
+// PROCESS HORSE (ATG real format)
+// ═══════════════════════════════════════
 function processHorse(start, race) {
   var horse = start.horse || {};
   var driverRaw = start.driver || {};
-  var trainerRaw = horse.trainer || start.trainer || {};
-  var pools = start.pools || {};
+  var trainerRaw = horse.trainer || {};
 
-  // Odds
+  // ── NAMN ──
+  var driverName = buildName(driverRaw);
+  var trainerName = buildName(trainerRaw);
+
+  // ── ODDS ──
+  // ATG: vinnar-odds kan ligga pa start-niva eller i pooler
   var winOdds = null;
-  var poolKeys = ['vinnare', 'V85', 'V75', 'V86', 'V65', 'V64', 'V4', 'V3'];
+  // Kolla start.pools
+  var pools = start.pools || {};
+  var poolKeys = ['vinnare', 'V85', 'V75', 'V86'];
   for (var p = 0; p < poolKeys.length; p++) {
-    var pool = pools[poolKeys[p]];
-    if (pool && pool.odds) { winOdds = pool.odds / 100; break; }
+    if (pools[poolKeys[p]] && pools[poolKeys[p]].odds) {
+      winOdds = pools[poolKeys[p]].odds / 100;
+      break;
+    }
   }
+  // Fallback: vpOdds, odds direkt
   if (!winOdds && start.vpOdds) winOdds = start.vpOdds / 100;
+  if (!winOdds && start.odds) winOdds = start.odds / 100;
+  // Fallback: lastFiveStarts averageOdds
+  if (!winOdds && horse.statistics && horse.statistics.lastFiveStarts && horse.statistics.lastFiveStarts.averageOdds) {
+    winOdds = horse.statistics.lastFiveStarts.averageOdds / 100;
+  }
 
-  var formStr = getFormString(horse);
-  var recentStarts = getRecentStarts(horse);
-  var times = getTimes(horse);
-  var driver = personStats(driverRaw);
-  var trainer = personStats(trainerRaw);
+  // ── STATISTIK (ATG format) ──
+  var horseStats = horse.statistics || {};
+  var lifeStats = horseStats.life || {};
+  var yearStats = getLatestYearStats(horseStats);
+  var trainerYearStats = getLatestYearStats(trainerRaw.statistics || {});
+  var driverYearStats = getLatestYearStats(driverRaw.statistics || {});
 
-  var histPct = histWinPct(horse);
+  // ── FORM STRING ──
+  var formStr = '';
+  if (lifeStats.placement) {
+    // Bygg fran senaste starter om tillgangligt
+  }
+  // Prova lastFiveStarts
+  if (horseStats.lastFiveStarts) {
+    // Vi har inte individuella resultat, bygg fran vinstprocent
+  }
+
+  // ── RECORDS / KM-TIDER ──
+  var times = extractTimes(horse, lifeStats);
+
+  // ── VINST% ──
+  var lifeStarts = lifeStats.starts || 0;
+  var lifeWins = lifeStats.placement ? (parseInt(lifeStats.placement['1']) || 0) : 0;
+  var histPct = lifeStarts > 0 ? Math.round(lifeWins / lifeStarts * 100) : 0;
+
+  // ── VALUE SCORE ──
   var implPct = winOdds ? (100 / winOdds) : 0;
   var valueScore = Math.round((histPct - implPct) * 10) / 10;
+
+  // ── KUSK/TRANARE FORM (ATG: winPercentage = 1578 = 15.78%) ──
+  var driverWinPct = driverYearStats.winPercentage ? Math.round(driverYearStats.winPercentage / 100) : 0;
+  var trainerWinPct = trainerYearStats.winPercentage ? Math.round(trainerYearStats.winPercentage / 100) : 0;
+  var driverStarts = driverYearStats.starts || 0;
+  var driverWins = driverYearStats.placement ? (parseInt(driverYearStats.placement['1']) || 0) : 0;
+  var trainerStarts = trainerYearStats.starts || 0;
+  var trainerWins = trainerYearStats.placement ? (parseInt(trainerYearStats.placement['1']) || 0) : 0;
+
+  // ── FRONT RUNNER ──
   var frScore = frontRunnerScore(start, race);
-  var flags = buildFlags(start, horse, driver, trainer, times, formStr, valueScore);
+
+  // ── FLAGS ──
+  var flags = [];
+  var yearWinPct = yearStats.winPercentage ? Math.round(yearStats.winPercentage / 100) : 0;
+  if (yearWinPct >= 30) flags.push('🔥 Hog vinstprocent ' + yearWinPct + '%');
+  if ((start.postPosition || start.number) <= 2) flags.push('🏃 Spetsposition spar ' + (start.postPosition || start.number));
+  if (driverWinPct >= 18) flags.push('🎯 Kusk i form ' + driverWinPct + '%');
+  if (driverWinPct > 0 && driverWinPct < 8) flags.push('⚠️ Kusk i svag form');
+  if (trainerWinPct >= 18) flags.push('🔥 Tranare i form ' + trainerWinPct + '%');
+  if (start.shoes && start.shoes.front && !start.shoes.front.hasShoe) flags.push('🔧 Skor av fram');
+  if (horse.money && horse.money > 500000) flags.push('💰 ' + Math.round(horse.money / 100) + ' kr intjanat');
+  if (valueScore > 10) flags.push('💎 Kraftigt undervarderad');
+  flags = flags.slice(0, 4);
 
   return {
     nr: start.number,
     name: horse.name || ('Hast ' + start.number),
     winOdds: winOdds,
     postPosition: start.postPosition || start.number,
-    history: { formStr: formStr, avgKmTime10: times.avg, bestKmTime: times.best, timeTrend: times.trend, recentStarts: recentStarts, trackStats: getTrackStats(horse, race.track ? race.track.name : '') },
-    driver: driver, trainer: trainer, flags: flags,
-    valueScore: valueScore, frontRunnerScore: frScore,
+    history: {
+      formStr: formStr || '',
+      avgKmTime10: times.avg,
+      bestKmTime: times.best,
+      timeTrend: times.trend,
+      recentStarts: [],
+      trackStats: []
+    },
+    driver: {
+      name: driverName,
+      yearPct: driverWinPct,
+      form30: { starts: driverStarts, wins: driverWins, winPct: driverWinPct },
+      form14: { starts: Math.round(driverStarts / 2), wins: Math.round(driverWins / 2), winPct: driverWinPct },
+      inForm: driverWinPct >= 18
+    },
+    trainer: {
+      name: trainerName,
+      yearPct: trainerWinPct,
+      form30: { starts: trainerStarts, wins: trainerWins, winPct: trainerWinPct },
+      form14: { starts: Math.round(trainerStarts / 2), wins: Math.round(trainerWins / 2), winPct: trainerWinPct },
+      inForm: trainerWinPct >= 18
+    },
+    flags: flags,
+    valueScore: valueScore,
+    frontRunnerScore: frScore,
     analysis: horse.raceComment || start.raceComment || '',
-    scoutPick: false, scoutPickType: null
+    scoutPick: false,
+    scoutPickType: null
   };
 }
 
-function getFormString(horse) {
-  if (horse.formFigures) return horse.formFigures.slice(0, 5);
-  var results = [];
-  if (horse.startSummary && horse.startSummary.lastStarts) results = horse.startSummary.lastStarts;
-  else if (horse.results) results = horse.results;
-  var form = '';
-  for (var i = 0; i < Math.min(5, results.length); i++) {
-    var r = results[i];
-    var place = r.place || r.finishOrder || 99;
-    if (r.disqualified || r.dq) form += 'D';
-    else if (place === 1) form += 'V';
-    else if (place <= 3) form += 'P';
-    else form += 'U';
-  }
-  return form || '';
+function buildName(person) {
+  if (!person) return '';
+  var first = person.firstName || '';
+  var last = person.lastName || '';
+  return (first + ' ' + last).trim() || person.name || '';
 }
 
-function getRecentStarts(horse) {
-  var starts = [];
-  if (horse.startSummary && horse.startSummary.lastStarts) starts = horse.startSummary.lastStarts;
-  else if (horse.results) starts = horse.results;
-  var out = [];
-  for (var i = 0; i < Math.min(7, starts.length); i++) {
-    var s = starts[i];
-    out.push({ date: s.date || s.raceDate || '', track: (s.track ? s.track.name : s.trackName) || '', distance: s.distance || null, place: s.place || s.finishOrder || null, disk: s.disqualified || s.dq || false, kmTimeRaw: s.kmTime || s.kilometerTime || '', odds: s.odds ? s.odds / 100 : null });
-  }
-  return out;
+function getLatestYearStats(stats) {
+  if (!stats || !stats.years) return {};
+  var years = stats.years;
+  // Hamta senaste aret
+  var keys = Object.keys(years).sort().reverse();
+  if (keys.length > 0) return years[keys[0]];
+  return {};
 }
 
-function getTimes(horse) {
-  var starts = [];
-  if (horse.startSummary && horse.startSummary.lastStarts) starts = horse.startSummary.lastStarts;
-  else if (horse.results) starts = horse.results;
+// ═══════════════════════════════════════
+// TIMES FROM RECORDS
+// ═══════════════════════════════════════
+function extractTimes(horse, lifeStats) {
+  var records = [];
+  if (lifeStats && lifeStats.records) records = lifeStats.records;
+  else if (horse.record) records = [horse.record];
+
   var times = [];
-  for (var i = 0; i < Math.min(10, starts.length); i++) {
-    var raw = starts[i].kmTime || starts[i].kilometerTime;
-    if (raw) { var secs = parseKmTime(raw); if (secs > 50 && secs < 100) times.push(secs); }
+  for (var i = 0; i < records.length; i++) {
+    var rec = records[i];
+    if (rec.time) {
+      var secs = (rec.time.minutes || 1) * 60 + (rec.time.seconds || 0) + (rec.time.tenths || 0) / 10;
+      if (secs > 50 && secs < 100) times.push(secs);
+    }
   }
-  if (!times.length) {
-    var rec = horse.records || {};
-    var best = rec.bestAutoTime || rec.bestVoltTime;
-    if (best) { var s = parseKmTime(best); if (s > 50 && s < 100) return { avg: s, best: s, trend: 'stable' }; }
-    return { avg: null, best: null, trend: 'stable' };
+
+  // Also check horse.record
+  if (horse.record && horse.record.time) {
+    var t = horse.record.time;
+    var s = (t.minutes || 1) * 60 + (t.seconds || 0) + (t.tenths || 0) / 10;
+    if (s > 50 && s < 100 && times.indexOf(s) === -1) times.push(s);
   }
+
+  if (!times.length) return { avg: null, best: null, trend: 'stable' };
+
   var sum = 0;
   for (var j = 0; j < times.length; j++) sum += times[j];
   var avg = sum / times.length;
   var best = Math.min.apply(null, times);
-  var trend = 'stable';
-  if (times.length >= 4) {
-    var half = Math.floor(times.length / 2);
-    var sumR = 0, sumO = 0;
-    for (var k = 0; k < half; k++) sumR += times[k];
-    for (var k2 = half; k2 < times.length; k2++) sumO += times[k2];
-    var recent = sumR / half;
-    var older = sumO / (times.length - half);
-    if (recent < older - 0.5) trend = 'improving';
-    else if (recent > older + 0.5) trend = 'declining';
-  }
-  return { avg: Math.round(avg * 10) / 10, best: Math.round(best * 10) / 10, trend: trend };
+
+  return {
+    avg: Math.round(avg * 10) / 10,
+    best: Math.round(best * 10) / 10,
+    trend: 'stable'
+  };
 }
 
-function parseKmTime(raw) {
-  if (typeof raw === 'number') return raw;
-  var str = String(raw).replace(',', '.').replace(':', '.');
-  var parts = str.split('.');
-  if (parts.length === 3) return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10) + parseFloat('0.' + parts[2]);
-  var val = parseFloat(str);
-  if (val < 3) return val * 60;
-  return val;
-}
-
-function personStats(person) {
-  if (!person) return { name: '', yearPct: 0, form30: null, form14: null, inForm: false };
-  var first = person.firstName || '';
-  var last = person.lastName || '';
-  var name = (first + ' ' + last).trim() || '';
-  var stats = person.statistics || person.stats || {};
-  var yearStarts = stats.starts || 0;
-  var yearWins = stats.wins || stats.firsts || 0;
-  if (!yearStarts && stats.thisYear) { yearStarts = stats.thisYear.starts || 0; yearWins = stats.thisYear.wins || stats.thisYear.firsts || 0; }
-  var yearPct = yearStarts > 0 ? Math.round(yearWins / yearStarts * 100) : 0;
-  var s30 = Math.max(1, Math.round(yearStarts / 12));
-  var w30 = Math.round(yearWins / 12);
-  var pct30 = s30 > 0 ? Math.round(w30 / s30 * 100) : yearPct;
-  if (stats.last30Days) { s30 = stats.last30Days.starts || s30; w30 = stats.last30Days.wins || w30; pct30 = s30 > 0 ? Math.round(w30 / s30 * 100) : pct30; }
-  var s14 = Math.max(1, Math.round(s30 / 2));
-  var w14 = Math.round(w30 / 2);
-  var pct14 = s14 > 0 ? Math.round(w14 / s14 * 100) : pct30;
-  return { name: name, yearPct: yearPct, form30: { starts: s30, wins: w30, winPct: pct30 }, form14: { starts: s14, wins: w14, winPct: pct14 }, inForm: pct30 >= 18 };
-}
-
-function getTrackStats(horse, currentTrack) {
-  var starts = [];
-  if (horse.startSummary && horse.startSummary.lastStarts) starts = horse.startSummary.lastStarts;
-  else if (horse.results) starts = horse.results;
-  var map = {};
-  for (var i = 0; i < starts.length; i++) {
-    var tn = starts[i].track ? starts[i].track.name : starts[i].trackName;
-    if (!tn) continue;
-    if (!map[tn]) map[tn] = { track: tn, starts: 0, wins: 0 };
-    map[tn].starts++;
-    if ((starts[i].place || starts[i].finishOrder) === 1) map[tn].wins++;
-  }
-  var arr = [];
-  for (var key in map) { map[key].winPct = map[key].starts > 0 ? Math.round(map[key].wins / map[key].starts * 100) : 0; arr.push(map[key]); }
-  arr.sort(function(a, b) { if (a.track === currentTrack) return -1; if (b.track === currentTrack) return 1; return b.starts - a.starts; });
-  return arr.slice(0, 5);
-}
-
-function histWinPct(horse) {
-  var summary = horse.startSummary || {};
-  var starts = summary.starts || 0;
-  var wins = summary.wins || summary.firsts || 0;
-  if (starts > 0) return Math.round(wins / starts * 100);
-  var results = (summary.lastStarts || horse.results || []);
-  if (!results.length) return 0;
-  var w = 0;
-  for (var i = 0; i < results.length; i++) { if ((results[i].place || results[i].finishOrder) === 1) w++; }
-  return Math.round(w / results.length * 100);
-}
-
+// ═══════════════════════════════════════
+// FRONT RUNNER
+// ═══════════════════════════════════════
 function frontRunnerScore(start, race) {
   var score = 0;
   var pos = start.postPosition || start.number;
-  if (race.startMethod === 'auto') { if (pos <= 2) score += 4; else if (pos <= 4) score += 2; }
+  var method = (race.startMethod || '').toLowerCase();
+  if (method === 'auto') { if (pos <= 2) score += 4; else if (pos <= 4) score += 2; }
   else { if (pos === 1) score += 5; else if (pos === 2) score += 3; else if (pos <= 4) score += 1; }
-  var form = getFormString(start.horse || {});
-  var vCount = (form.match(/V/g) || []).length;
-  score += vCount;
   return Math.min(10, score);
 }
 
-function buildFlags(start, horse, driver, trainer, times, formStr, valueScore) {
-  var flags = [];
-  var vCount = (formStr.match(/V/g) || []).length;
-  if (vCount >= 2) flags.push('🔥 Form-häst – ' + vCount + 'V senaste ' + formStr.length);
-  if ((start.postPosition || start.number) <= 2) flags.push('🏃 Spetshäst – spår ' + (start.postPosition || start.number));
-  if (times.trend === 'improving') flags.push('📈 Förbättrade km-tider');
-  if (driver.form30 && driver.form30.winPct >= 18) flags.push('🎯 Kusk i form ' + driver.form30.winPct + '%');
-  if (driver.form30 && driver.form30.winPct > 0 && driver.form30.winPct < 8) flags.push('⚠️ Kusk i svag form');
-  if (formStr[0] === 'V') flags.push('⚡ Vann senast');
-  if (valueScore > 10) flags.push('💎 Kraftigt undervärderad');
-  if (start.driverChanged) flags.push('🔄 Kuskbyte');
-  return flags.slice(0, 4);
-}
-
+// ═══════════════════════════════════════
+// INSIGHTS
+// ═══════════════════════════════════════
 function calcInsights(horses) {
   var byFR = horses.slice().sort(function(a, b) { return b.frontRunnerScore - a.frontRunnerScore; });
   var likelyFrontRunner = null;
@@ -335,23 +307,18 @@ function calcInsights(horses) {
   var byVal = horses.filter(function(h) { return h.valueScore > 4; }).sort(function(a, b) { return b.valueScore - a.valueScore; });
   var topValueHorse = null;
   if (byVal.length) {
-    var form = byVal[0].history ? byVal[0].history.formStr : '';
-    var total = form.length || 1;
-    var wins = (form.match(/V/g) || []).length;
-    topValueHorse = { nr: byVal[0].nr, name: byVal[0].name, valueScore: byVal[0].valueScore, odds: byVal[0].winOdds, histWinPct: Math.round(wins / total * 100) };
+    topValueHorse = { nr: byVal[0].nr, name: byVal[0].name, valueScore: byVal[0].valueScore, odds: byVal[0].winOdds, histWinPct: 0 };
   }
-  var missed = horses.filter(function(h) { return h.valueScore > 6 && h.winOdds > 5; }).sort(function(a, b) { return b.valueScore - a.valueScore; }).slice(0, 2).map(function(h) {
-    return { nr: h.nr, name: h.name, odds: h.winOdds, valueScore: h.valueScore, reason: h.flags.slice(0, 2).join(' · ') || 'Undervärderad' };
+  var missed = horses.filter(function(h) { return h.valueScore > 6 && h.winOdds && h.winOdds > 5; }).sort(function(a, b) { return b.valueScore - a.valueScore; }).slice(0, 2).map(function(h) {
+    return { nr: h.nr, name: h.name, odds: h.winOdds, valueScore: h.valueScore, reason: h.flags.slice(0, 2).join(' · ') || 'Undervarderad' };
   });
   return { likelyFrontRunner: likelyFrontRunner, topValueHorse: topValueHorse, missedHorses: missed, formHorses: [] };
 }
 
 function frReason(h) {
   var parts = [];
-  if (h.postPosition <= 2) parts.push('Spår ' + h.postPosition);
-  var hasForm = false;
-  for (var i = 0; i < h.flags.length; i++) { if (h.flags[i].indexOf('Form') !== -1) hasForm = true; }
-  if (hasForm) parts.push('Topform');
+  if (h.postPosition <= 2) parts.push('Spar ' + h.postPosition);
+  for (var i = 0; i < h.flags.length; i++) { if (h.flags[i].indexOf('form') !== -1 || h.flags[i].indexOf('Form') !== -1) { parts.push('I form'); break; } }
   return parts.join(' · ') || 'Stark position';
 }
 
@@ -362,30 +329,24 @@ function buildScoutText(horses, insights, race) {
   if (fr) {
     var frH = horses.find(function(h) { return h.nr === fr.nr; });
     if (frH) {
-      var sm = race.startMethod === 'auto' ? 'autostart' : 'voltstart';
-      var dn = frH.driver ? frH.driver.name : '';
-      parts.push(frH.name + ' (' + frH.nr + ') ser ut att ta spets fran ' + sm + (dn ? ' med ' + dn : '') + '.');
+      var sm = (race.startMethod || '').toLowerCase() === 'auto' ? 'autostart' : 'voltstart';
+      parts.push(frH.name + ' (' + frH.nr + ') ser ut att ta spets fran ' + sm + (frH.driver.name ? ' med ' + frH.driver.name : '') + '.');
     }
   }
   if (tv && (!fr || tv.nr !== fr.nr)) {
     var tvH = horses.find(function(h) { return h.nr === tv.nr; });
-    if (tvH) parts.push(tvH.name + ' (' + tvH.nr + ') sticker ut som vardehast pa odds ' + tvH.winOdds + ' (EV +' + tv.valueScore + '%).');
-  }
-  var missed2 = insights.missedHorses || [];
-  if (missed2.length && (!fr || missed2[0].nr !== fr.nr) && (!tv || missed2[0].nr !== tv.nr)) {
-    parts.push('Hall koll pa ' + missed2[0].name + ' @ ' + missed2[0].odds + '.');
+    if (tvH && tvH.winOdds) parts.push(tvH.name + ' (' + tvH.nr + ') sticker ut som vardehast pa odds ' + tvH.winOdds + '.');
   }
   var sorted = horses.filter(function(h) { return h.winOdds; }).sort(function(a, b) { return a.winOdds - b.winOdds; });
   if (sorted.length >= 2 && sorted[0].winOdds < 2.5) parts.push('Tydlig favorit – potentiellt singellage.');
   else if (sorted.length >= 2 && sorted[0].winOdds > 4) parts.push('Oppet lopp – gardering rekommenderas.');
-  return parts.join(' ') || 'Jamnt lopp utan tydlig favorit.';
+  if (!parts.length) parts.push('Odds ej tillgangliga annu. Uppdateras automatiskt narmare start.');
+  return parts.join(' ');
 }
 
 function markPicks(horses) {
   var scored = horses.map(function(h) {
-    var form = h.history ? h.history.formStr : '';
-    var vCount = (form.match(/V/g) || []).length;
-    return { h: h, score: (h.valueScore || 0) * 0.4 + (h.frontRunnerScore || 0) * 3 + vCount * 5 + (h.driver && h.driver.inForm ? 5 : 0) + (h.trainer && h.trainer.inForm ? 3 : 0) + (h.history && h.history.timeTrend === 'improving' ? 4 : 0) };
+    return { h: h, score: (h.valueScore || 0) * 0.4 + (h.frontRunnerScore || 0) * 3 + (h.driver && h.driver.inForm ? 5 : 0) + (h.trainer && h.trainer.inForm ? 3 : 0) };
   }).sort(function(a, b) { return b.score - a.score; });
   if (!scored.length) return;
   var gap = scored.length >= 2 ? scored[0].score - scored[1].score : 999;
