@@ -310,40 +310,66 @@ function generateCoupons(races) {
 }
 
 function buildCoupon(analysis, type) {
-  // Sortera lopp efter confidence (hogst forst = bast att singla)
-  var sorted = analysis.slice().sort(function(a, b) { return b.gap - a.gap; });
+  // Malkostnad per typ
+  var targetRader;
+  if (type === 'spik') targetRader = 100;       // ~50 kr
+  else if (type === 'mellan') targetRader = 300; // ~150 kr
+  else targetRader = 1000;                       // ~500 kr
 
-  var picks = [];
-  var maxGardering;
-  if (type === 'spik') maxGardering = 2;       // Max 2 garderingar
-  else if (type === 'mellan') maxGardering = 4; // Max 4 garderingar
-  else maxGardering = 6;                        // Max 6 garderingar
+  // Sortera lopp efter confidence (lagst forst = bor garderas forst)
+  var sorted = analysis.slice().sort(function(a, b) { return a.gap - b.gap; });
 
-  var garderingCount = 0;
-
-  // Ga igenom loppen sorterade efter confidence
+  // Starta med alla singlar
   var pickMap = {};
   for (var i = 0; i < sorted.length; i++) {
-    var race = sorted[i];
-    var isSingel;
+    pickMap[sorted[i].raceNumber] = { singel: true, horses: [sorted[i].top], available: [sorted[i].top, sorted[i].second, sorted[i].third].filter(Boolean) };
+  }
 
-    if (type === 'spik') {
-      isSingel = race.confidence === 'high' || race.confidence === 'medium' || garderingCount >= maxGardering;
-    } else if (type === 'mellan') {
-      isSingel = race.confidence === 'high' || garderingCount >= maxGardering;
-    } else {
-      isSingel = race.confidence === 'high' && race.gap > 20 || garderingCount >= maxGardering;
+  // Berakna rader
+  function countRader() {
+    var r = 1;
+    for (var rn in pickMap) r *= pickMap[rn].horses.length;
+    return r;
+  }
+
+  // Iterativt lagg till hastar tills vi narmar oss budget
+  // Forsta passet: oppna ossakra lopp till 2 hastar
+  for (var pass1 = 0; pass1 < sorted.length; pass1++) {
+    if (countRader() >= targetRader) break;
+    var race1 = sorted[pass1];
+    var pick1 = pickMap[race1.raceNumber];
+    if (pick1.horses.length < 2 && pick1.available.length >= 2) {
+      pick1.horses = pick1.available.slice(0, 2);
+      pick1.singel = false;
     }
+  }
 
-    if (isSingel) {
-      pickMap[race.raceNumber] = { singel: true, horses: [race.top] };
-    } else {
-      garderingCount++;
-      var numHorses = type === 'bred' ? 3 : 2;
-      var selected = [race.top];
-      if (race.second) selected.push(race.second);
-      if (numHorses >= 3 && race.third) selected.push(race.third);
-      pickMap[race.raceNumber] = { singel: false, horses: selected };
+  // Andra passet: oppna till 3 hastar om vi fortfarande ar under budget
+  for (var pass2 = 0; pass2 < sorted.length; pass2++) {
+    if (countRader() >= targetRader) break;
+    var race2 = sorted[pass2];
+    var pick2 = pickMap[race2.raceNumber];
+    if (pick2.horses.length < 3 && pick2.available.length >= 3) {
+      pick2.horses = pick2.available.slice(0, 3);
+      pick2.singel = false;
+    }
+  }
+
+  // Tredje passet (bara bred): oppna till 4 hastar
+  if (type === 'bred') {
+    for (var pass3 = 0; pass3 < sorted.length; pass3++) {
+      if (countRader() >= targetRader) break;
+      var race3 = sorted[pass3];
+      var pick3 = pickMap[race3.raceNumber];
+      if (pick3.horses.length < 4) {
+        var allH = race3.allSorted || [];
+        var more = [];
+        for (var m = 0; m < Math.min(4, allH.length); m++) more.push(allH[m]);
+        if (more.length > pick3.horses.length) {
+          pick3.horses = more;
+          pick3.singel = false;
+        }
+      }
     }
   }
 
@@ -351,16 +377,17 @@ function buildCoupon(analysis, type) {
   var rader = 1;
   var singlar = 0;
   var gard = 0;
+  var picks = [];
   for (var j = 0; j < analysis.length; j++) {
     var rn = analysis[j].raceNumber;
     var pick = pickMap[rn];
     rader *= pick.horses.length;
-    if (pick.singel) singlar++;
+    if (pick.horses.length === 1) singlar++;
     else gard++;
     picks.push({
       raceNumber: rn,
       raceName: analysis[j].name,
-      singel: pick.singel,
+      singel: pick.horses.length === 1,
       horses: pick.horses
     });
   }
@@ -369,13 +396,13 @@ function buildCoupon(analysis, type) {
   var label, description;
   if (type === 'spik') {
     label = '🎯 Spikkupong';
-    description = 'Max singlar. Billigast, hogst chans per rad men smalt.';
+    description = 'Smal kupong runt 50 kr. Singlar sakra lopp, nagon gardering.';
   } else if (type === 'mellan') {
     label = '⚖️ Mellankupong';
-    description = 'Balanserad. Singlar sakra lopp, garderar ossakra.';
+    description = 'Balanserad kupong runt 150 kr. Garderar ossakra lopp med 2-3 hastar.';
   } else {
     label = '🛡️ Bred kupong';
-    description = 'Flest garderingar. Dyrare men storst tackning.';
+    description = 'Bred kupong runt 500 kr. Maximal tackning med flera garderingar.';
   }
 
   return {
