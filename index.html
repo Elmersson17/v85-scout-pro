@@ -710,7 +710,7 @@ function renderHorse(h, race){
   <div class="hc-people" onclick="togDet('${hid}')">
     <div class="person-block">
       <div class="person-role-tag prt-driver">KUSK</div>
-      <div class="person-name">${h.driver||'–'}</div>
+      <div class="person-name">${h.driver?.name||h.driver||'–'}</div>
       <div class="person-pct-row">
         ${drP!=null?`<span class="person-pct ${pCls(drP)}">${drP}%</span><span class="person-pct-lbl">30d</span>`:''}
         ${h.driver?.inForm?`<span class="form-fire">🔥 FORM</span>`:''}
@@ -718,7 +718,7 @@ function renderHorse(h, race){
     </div>
     <div class="person-block">
       <div class="person-role-tag prt-trainer">TRÄNARE</div>
-      <div class="person-name">${h.trainer||'–'}</div>
+      <div class="person-name">${h.trainer?.name||h.trainer||'–'}</div>
       <div class="person-pct-row">
         ${trP!=null?`<span class="person-pct ${pCls(trP)}">${trP}%</span><span class="person-pct-lbl">30d</span>`:''}
         ${h.trainer?.inForm?`<span class="form-fire">🔥 FORM</span>`:''}
