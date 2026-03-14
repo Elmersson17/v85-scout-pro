@@ -502,11 +502,74 @@ function loadDemo(){
 function render(data){
   document.getElementById('empty').style.display='none';
   document.getElementById('out').style.display='block';
-  document.getElementById('syswrap').innerHTML=renderSys(data);
+  document.getElementById('syswrap').innerHTML=renderCoupons(data) + renderSys(data);
   const dm=document.getElementById('dlmain');
   dm.innerHTML=data.races.map((r,i)=>renderRace(r,i)).join('');
   renderSidebar(data);
   renderNavs(data);
+}
+
+/* ─── KUPONG-KORT ─── */
+function renderCoupons(data){
+  if(!data.coupons) return '';
+  const c=data.coupons;
+  const tabs=['spik','mellan','bred'];
+  const labels={spik:'🎯 Spik',mellan:'⚖️ Mellan',bred:'🛡️ Bred'};
+  return `
+  <div class="sys-card" style="border-color:var(--green2)">
+    <div class="sys-head" style="background:rgba(34,204,102,.07)">
+      <div class="sys-title" style="color:var(--green)">🏇 Rekommenderad Kupong</div>
+      <div class="sys-sub">AI-genererad baserat på statistik, form och spårposition</div>
+    </div>
+    <div class="sys-body">
+      <div style="display:flex;gap:5px;margin-bottom:12px">
+        ${tabs.map(t=>`<button class="bbt ${t==='mellan'?'bbt-on':''}" id="ctab-${t}" onclick="showCoupon('${t}')">${labels[t]}</button>`).join('')}
+      </div>
+      <div id="coupon-content">${renderCouponDetail(c.mellan||c.spik)}</div>
+
+      <div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line)">
+        <div class="det-t">SANNOLIKHET PER LOPP</div>
+        ${(c.analysis||[]).map(a=>`
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+            <span style="font-family:'JetBrains Mono',monospace;font-size:14px;font-weight:700;color:var(--amber);min-width:28px">L${a.raceNumber}</span>
+            <div style="flex:1;display:flex;gap:4px;flex-wrap:wrap">
+              ${a.allSorted.slice(0,4).map((h,i)=>`<span style="font-size:11px;padding:3px 7px;border-radius:5px;font-weight:700;background:${i===0?'rgba(34,204,102,.12)':i===1?'rgba(232,160,32,.1)':'rgba(255,255,255,.03)'};color:${i===0?'var(--green)':i===1?'var(--amber)':'var(--dim)'};border:1px solid ${i===0?'rgba(34,204,102,.2)':i===1?'rgba(232,160,32,.18)':'var(--line)'}">${h.nr}.${(h.name||'').split(' ')[0]} ${h.pct}%</span>`).join('')}
+            </div>
+            <span style="font-size:9px;font-weight:700;letter-spacing:1px;padding:2px 6px;border-radius:4px;background:${a.confidence==='high'?'rgba(34,204,102,.12)':a.confidence==='medium'?'rgba(232,160,32,.1)':'rgba(224,64,80,.08)'};color:${a.confidence==='high'?'var(--green)':a.confidence==='medium'?'var(--amber)':'var(--red)'}">${a.confidence==='high'?'SINGEL':a.confidence==='medium'?'TIPP':'ÖPPET'}</span>
+          </div>`).join('')}
+      </div>
+    </div>
+  </div>`;
+}
+
+function renderCouponDetail(coupon){
+  if(!coupon) return '';
+  return `
+    <div style="display:flex;gap:7px;margin-bottom:10px;flex-wrap:wrap">
+      <div class="sg-cell" style="flex:1;min-width:70px"><div class="sg-val">${coupon.rader}</div><div class="sg-lbl">RADER</div></div>
+      <div class="sg-cell" style="flex:1;min-width:70px"><div class="sg-val" style="color:var(--green)">${coupon.kostnad} kr</div><div class="sg-lbl">KOSTNAD</div></div>
+      <div class="sg-cell" style="flex:1;min-width:70px"><div class="sg-val">${coupon.singlar}S / ${coupon.garderingar}G</div><div class="sg-lbl">SINGLAR</div></div>
+    </div>
+    <div style="font-size:11px;color:var(--dim);margin-bottom:10px">${coupon.description}</div>
+    <div style="display:flex;flex-direction:column;gap:5px">
+      ${coupon.picks.map(p=>`
+        <div style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;background:var(--bg2);border:1px solid ${p.singel?'rgba(34,204,102,.2)':'var(--line)'}">
+          <span style="font-family:'JetBrains Mono',monospace;font-size:13px;font-weight:700;color:var(--amber);min-width:28px">L${p.raceNumber}</span>
+          <div style="flex:1;display:flex;gap:4px;flex-wrap:wrap">
+            ${p.horses.map((h,i)=>`<span style="font-size:12px;font-weight:700;color:${i===0?'var(--white)':'var(--text)'}">${h.nr}.${(h.name||'').split(' ')[0]}${h.pct?' ('+h.pct+'%)':''}</span>`).join(`<span style="color:var(--dim)">/</span>`)}
+          </div>
+          <span style="font-size:9px;font-weight:700;padding:2px 7px;border-radius:4px;${p.singel?'background:rgba(34,204,102,.12);color:var(--green)':'background:rgba(232,160,32,.1);color:var(--amber)'}">${p.singel?'SINGEL':'GARD'}</span>
+        </div>`).join('')}
+    </div>`;
+}
+
+function showCoupon(type){
+  if(!GD||!GD.coupons) return;
+  ['spik','mellan','bred'].forEach(t=>{
+    var el=document.getElementById('ctab-'+t);
+    if(el) el.className='bbt'+(t===type?' bbt-on':'');
+  });
+  document.getElementById('coupon-content').innerHTML=renderCouponDetail(GD.coupons[type]);
 }
 
 /* ─── SYSTEM CARD ─── */
@@ -676,6 +739,7 @@ function renderRace(race, ri){
 /* ─── HORSE CARD ─── */
 function renderHorse(h, race){
   const impl=h.winOdds?(100/h.winOdds).toFixed(0)+'%':'–';
+  const probBadge=h.probability?`<div style="font-family:'JetBrains Mono',monospace;font-size:10px;font-weight:700;color:${h.probability>20?'var(--green)':h.probability>12?'var(--amber)':'var(--dim)'}">${h.probability}% chans</div>`:'';
   const fhtml=(h.history?.formStr||'–').split('').map(c=>`<span class="fc-${c}">${c}</span>`).join('');
   const avgT=h.history?.avgKmTime10;
   const tr=h.history?.timeTrend;
@@ -704,6 +768,7 @@ function renderHorse(h, race){
     <div class="hc-odds-col">
       <div class="hc-odds">${h.winOdds??'–'}</div>
       <div class="hc-impl">${impl}</div>
+      ${probBadge}
     </div>
   </div>
 
