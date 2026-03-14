@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+
+<html lang="sv">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="theme-color" content="#07090d">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="color-scheme" content="dark">
+<title>V85 Scout Pro</title>
+<link href="https://fonts.googleapis.com/css2?family=Roboto+Condensed:wght@400;700&family=JetBrains+Mono:wght@400;700&family=Playfair+Display:wght@900&display=swap" rel="stylesheet">
+<style>
+/* ── RESET & TOKENS ── */
+*, *::before, *::after { box-sizing:border-box; margin:0; padding:0; -webkit-tap-highlight-color:transparent; }
+html, body { background:#07090d !important; color:#c8d4e8; min-height:100vh; }
+:root {
+  --bg:#07090d; --bg2:#0c0f16; --panel:#111720;
+  --card:#161d28; --card2:#1c2535;
+  --line:#1e2838; --line2:#263248;
+  --text:#c8d4e8; --dim:#566a84; --faint:#1e2d40;
+  --amber:#e8a020; --amber2:#a06810;
+  --green:#22cc66; --green2:#155c30;
+  --red:#e04050; --blue:#4090e8;
+  --white:#eef2f8;
+  --th:52px; --strip:46px;
+  --st:env(safe-area-inset-top,0px);
+  --sb:env(safe-area-inset-bottom,0px);
+}
+body {
+  font-family:'Roboto Condensed',sans-serif;
+  background:var(--bg); color:var(--text);
+  overflow-x:hidden;
+  padding-top:var(--st);
+  /* prevent white flash on iOS */
+  -webkit-text-size-adjust:100%;
+}
+
+/* ═══════════════════════════════
+TOPBAR
+═══════════════════════════════ */
+.topbar {
+position:fixed; top:var(--st); left:0; right:0; z-index:500;
+height:var(--th);
+background:#07090d;
+border-bottom:1px solid var(--line);
+display:flex; align-items:center; gap:8px; padding:0 12px;
+}
+.logo {
+font-family:'Playfair Display',serif;
+font-size:18px; font-weight:900; color:var(--amber); flex-shrink:0;
+letter-spacing:.02em;
+}
+.logo sup { font-family:'JetBrains Mono',monospace; font-size:8px; color:var(--green); letter-spacing:2px; vertical-align:super; }
+.tb-search { flex:1; display:flex; gap:6px; min-width:0; }
+.tb-input {
+flex:1; min-width:0;
+background:var(--card); border:1px solid var(--line2);
+color:var(--text); padding:8px 10px; border-radius:8px; outline:none;
+font-family:'JetBrains Mono',monospace; font-size:11px;
+}
+.tb-input::placeholder { color:var(--dim); }
+.tb-input:focus { border-color:var(--amber); }
+.tb-go {
+background:var(--amber); color:#000; border:none; border-radius:8px;
+padding:8px 14px; font-weight:700; font-size:15px; cursor:pointer; flex-shrink:0;
+}
+.tb-demo {
+background:var(--card2); color:var(--dim); border:1px solid var(--line2);
+border-radius:8px; padding:8px 10px; font-weight:700; font-size:12px;
+cursor:pointer; flex-shrink:0; font-family:'Roboto Condensed',sans-serif;
+}
+.live-dot {
+display:none; width:8px; height:8px; border-radius:50%;
+background:var(--green); flex-shrink:0; animation:blink 1.5s infinite;
+}
+.live-dot.on { display:block; }
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+
+/* ═══════════════════════════════
+RACE STRIP  (scrollable tabs)
+═══════════════════════════════ */
+.rstrip {
+position:fixed; left:0; right:0; z-index:400;
+top:calc(var(--st) + var(--th));
+height:var(--strip);
+background:var(--bg2);
+border-bottom:1px solid var(--line);
+overflow-x:auto; overflow-y:hidden;
+-webkit-overflow-scrolling:touch; scrollbar-width:none;
+display:none; /* shown when data loads */
+}
+.rstrip::-webkit-scrollbar { display:none; }
+.rstrip.on { display:block; }
+.rstrip-inner {
+display:flex; align-items:center; height:100%;
+padding:0 10px; gap:4px; min-width:max-content;
+}
+.rtab {
+display:flex; align-items:center; gap:6px;
+padding:5px 12px; border-radius:7px; cursor:pointer;
+border:1px solid transparent; transition:all .12s;
+flex-shrink:0;
+}
+.rtab.on { background:rgba(232,160,32,.14); border-color:var(--amber2); }
+.rtab-n { font-family:'JetBrains Mono',monospace; font-size:15px; font-weight:700; color:var(--amber); }
+.rtab-pip { width:6px; height:6px; border-radius:50%; }
+.pip-g{background:var(--green)} .pip-a{background:var(--amber)} .pip-f{background:var(--faint)}
+
+/* ═══════════════════════════════
+PAGE SCROLL CONTAINER
+═══════════════════════════════ */
+#page {
+padding-top:calc(var(--st) + var(--th));
+padding-bottom:calc(72px + var(--sb));
+background:var(--bg);
+min-height:100vh;
+}
+#page.has-strip {
+padding-top:calc(var(--st) + var(--th) + var(--strip));
+}
+
+/* ═══════════════════════════════
+EMPTY / LOADING
+═══════════════════════════════ */
+#empty {
+display:flex; flex-direction:column; align-items:center;
+justify-content:center; min-height:68vh;
+gap:14px; padding:28px; text-align:center;
+}
+.ei { font-size:54px; opacity:.25; }
+.eh { font-family:'Playfair Display',serif; font-size:22px; color:var(--white); }
+.ep { font-size:13px; color:var(--dim); line-height:1.8; max-width:290px; }
+.lbar { width:180px; height:2px; background:var(--faint); border-radius:1px; overflow:hidden; }
+.lbar-f { height:100%; background:var(--amber); animation:lp 1.3s ease-in-out infinite; }
+@keyframes lp{0%{width:0;margin-left:0}50%{width:60%;margin-left:20%}100%{width:0;margin-left:100%}}
+
+/* ═══════════════════════════════
+SYSTEM SUMMARY CARD
+═══════════════════════════════ */
+.sys-card {
+margin:12px 12px 4px;
+background:var(--card);
+border:1px solid var(--amber2);
+border-radius:12px; overflow:hidden;
+}
+.sys-head {
+background:rgba(232,160,32,.07);
+border-bottom:1px solid var(--line);
+padding:11px 14px;
+}
+.sys-title { font-family:'Playfair Display',serif; font-size:16px; color:var(--amber); }
+.sys-sub { font-size:11px; color:var(--dim); margin-top:1px; }
+.sys-body { padding:12px 14px; }
+.sys-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin-bottom:10px; }
+.sg-cell { background:var(--bg2); border:1px solid var(--line); border-radius:8px; padding:8px 8px; text-align:center; }
+.sg-val { font-family:'JetBrains Mono',monospace; font-size:18px; font-weight:700; color:var(--amber); }
+.sg-lbl { font-size:9px; color:var(--dim); font-weight:700; letter-spacing:1px; margin-top:1px; }
+.sys-advice {
+font-size:12px; line-height:1.75; color:var(--text);
+background:var(--bg2); border-radius:8px;
+border-left:3px solid var(--amber); padding:10px 12px;
+margin-bottom:10px;
+}
+.sys-advice strong { color:var(--amber); }
+.sys-picks { display:flex; flex-wrap:wrap; gap:6px; }
+
+/* budget row */
+.budget-row { display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap; }
+.budget-lbl { font-size:9px; font-weight:700; letter-spacing:2px; color:var(--dim); flex-shrink:0; }
+.budget-btns { display:flex; gap:5px; flex:1; flex-wrap:wrap; }
+.bbt {
+background:var(--bg2); border:1px solid var(--line2); color:var(--dim);
+border-radius:7px; padding:5px 11px; font-size:13px; font-weight:700;
+cursor:pointer; font-family:'Roboto Condensed',sans-serif;
+transition:all .12s;
+}
+.bbt:hover { border-color:var(--amber2); color:var(--amber); }
+.bbt-on { background:rgba(232,160,32,.14) !important; border-color:var(--amber) !important; color:var(--amber) !important; }
+.budget-cur { font-family:'JetBrains Mono',monospace; font-size:15px; font-weight:700; flex-shrink:0; }
+.budget-bar-wrap { width:100%; height:4px; background:var(--faint); border-radius:2px; overflow:hidden; margin-bottom:12px; }
+.budget-bar-fill { height:100%; border-radius:2px; transition:width .3s ease, background .3s; }
+.sp-item {
+display:flex; align-items:center; gap:6px;
+background:var(--bg2); border:1px solid var(--line);
+border-radius:8px; padding:6px 10px;
+}
+.sp-lopp { font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:700; color:var(--amber); }
+.sp-name { font-size:12px; font-weight:700; color:var(--white); }
+.sp-type { font-size:9px; font-weight:700; padding:2px 6px; border-radius:4px; }
+.spt-s { background:rgba(34,204,102,.12); color:var(--green); }
+.spt-g { background:rgba(232,160,32,.12); color:var(--amber); }
+
+/* ═══════════════════════════════
+RACE SECTION
+═══════════════════════════════ */
+.race { padding:16px 12px 10px; }
+.race + .race { border-top:2px solid var(--line); }
+
+/* Race header */
+.race-hdr { display:flex; align-items:flex-start; gap:10px; margin-bottom:12px; }
+.race-nr {
+font-family:'Playfair Display',serif;
+font-size:40px; font-weight:900; color:var(--amber); line-height:1; flex-shrink:0;
+}
+.race-hdr-r { flex:1; min-width:0; }
+.race-title { font-size:16px; font-weight:700; color:var(--white); line-height:1.2; }
+.race-meta { display:flex; flex-wrap:wrap; gap:6px; font-size:11px; color:var(--dim); margin-top:4px; }
+
+/* Scout analysis */
+.scout-box {
+background:var(--panel);
+border-left:3px solid var(--blue);
+border-radius:0 10px 10px 0;
+padding:11px 13px; margin-bottom:10px;
+}
+.scout-box-hdr { display:flex; align-items:center; gap:6px; margin-bottom:6px; }
+.scout-box-lbl { font-size:9px; font-weight:700; letter-spacing:2px; color:var(--blue); }
+.scout-box-text { font-size:13px; line-height:1.7; color:var(--text); }
+.scout-picks-row { display:flex; flex-wrap:wrap; gap:5px; margin-top:9px; }
+.scout-pick-pill {
+display:flex; align-items:center; gap:5px;
+padding:5px 10px; border-radius:7px; font-size:12px; font-weight:700;
+}
+.spp-s { background:rgba(34,204,102,.12); color:var(--green); border:1px solid rgba(34,204,102,.22); }
+.spp-g { background:rgba(232,160,32,.1);  color:var(--amber); border:1px solid rgba(232,160,32,.2); }
+.spp-dot { width:5px; height:5px; border-radius:50%; }
+.spp-s .spp-dot{background:var(--green)} .spp-g .spp-dot{background:var(--amber)}
+
+/* Insight chips */
+.chips { display:flex; gap:7px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; margin-bottom:10px; padding-bottom:2px; }
+.chips::-webkit-scrollbar { display:none; }
+.chip { flex-shrink:0; padding:7px 11px; border-radius:8px; border:1px solid; font-size:12px; line-height:1.35; min-width:130px; }
+.ch-f{background:rgba(64,144,232,.07);border-color:rgba(64,144,232,.28)}
+.ch-v{background:rgba(34,204,102,.07);border-color:rgba(34,204,102,.28)}
+.ch-w{background:rgba(232,160,32,.07);border-color:rgba(232,160,32,.25)}
+.chip-l{font-size:8px;font-weight:700;letter-spacing:1.5px;color:var(--dim)}
+.chip-v{font-size:13px;font-weight:700;color:var(--white);margin:1px 0}
+.chip-s{font-size:10px;color:var(--dim)}
+.ch-f .chip-v{color:#70a8f0} .ch-v .chip-v{color:var(--green)} .ch-w .chip-v{color:var(--amber)}
+
+/* ═══════════════════════════════
+HORSE CARD
+═══════════════════════════════ */
+.hcard {
+background:var(--card); border:1px solid var(--line);
+border-radius:12px; margin-bottom:9px; overflow:hidden;
+}
+.hcard.cv { border-left:3px solid var(--green); }
+.hcard.cw { border-left:3px solid var(--amber); }
+.hcard.picked { background:rgba(34,204,102,.025); }
+
+/* ── top row: nr / name / odds ── */
+.hc-top {
+display:grid; grid-template-columns:34px 1fr auto;
+align-items:start; gap:10px;
+padding:12px 13px 0;
+cursor:pointer; user-select:none;
+}
+.hc-nr {
+font-family:'JetBrains Mono',monospace;
+font-size:24px; font-weight:700; color:var(--amber); line-height:1;
+}
+.hc-name { font-size:17px; font-weight:700; color:var(--white); line-height:1.15; }
+.hc-odds-col { text-align:right; }
+.hc-odds { font-family:'JetBrains Mono',monospace; font-size:22px; font-weight:700; color:var(--white); line-height:1; }
+.hc-impl { font-family:'JetBrains Mono',monospace; font-size:10px; color:var(--dim); }
+
+/* ── kusk + tränare ── */
+.hc-people {
+display:grid; grid-template-columns:1fr 1fr; gap:7px;
+padding:9px 13px 0; cursor:pointer;
+}
+.person-block {
+background:var(--bg2); border:1px solid var(--line);
+border-radius:9px; padding:8px 10px;
+display:flex; flex-direction:column; gap:4px;
+}
+.person-role-tag {
+display:inline-flex; align-items:center; gap:5px;
+font-size:8px; font-weight:700; letter-spacing:1.5px;
+padding:2px 7px; border-radius:4px; width:fit-content;
+}
+.prt-driver  { background:rgba(64,144,232,.15); color:var(--blue); }
+.prt-trainer { background:rgba(232,160,32,.12); color:var(--amber); }
+.person-name {
+font-size:14px; font-weight:700; color:var(--white);
+white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+line-height:1.2;
+}
+.person-pct-row { display:flex; align-items:center; gap:5px; }
+.person-pct {
+font-family:'JetBrains Mono',monospace;
+font-size:13px; font-weight:700;
+}
+.person-pct-lbl { font-size:10px; color:var(--dim); }
+.form-fire {
+font-size:9px; font-weight:700;
+background:rgba(34,204,102,.12); color:var(--green);
+border:1px solid rgba(34,204,102,.22);
+padding:2px 6px; border-radius:4px;
+}
+.hot{color:var(--green)!important} .warm{color:var(--amber)!important} .cold{color:var(--dim)!important}
+
+/* ── stat pills ── */
+.hc-stats {
+display:flex; flex-wrap:wrap; gap:5px;
+padding:9px 13px 0; cursor:pointer;
+}
+.spill {
+display:flex; align-items:center; gap:4px;
+background:var(--bg2); border:1px solid var(--line);
+border-radius:6px; padding:4px 9px;
+}
+.sp-l { font-size:9px; font-weight:700; letter-spacing:1px; color:var(--dim); }
+.sp-v { font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:700; color:var(--text); }
+.fc-V{color:var(--green);font-weight:700} .fc-P{color:var(--amber)} .fc-U{color:var(--faint)} .fc-D{color:var(--red)}
+.tr-up{color:var(--green)} .tr-dn{color:var(--red)}
+.vbadge { font-family:'JetBrains Mono',monospace; font-size:11px; font-weight:700; padding:4px 8px; border-radius:6px; }
+.vb-p{background:rgba(34,204,102,.12);color:var(--green);border:1px solid rgba(34,204,102,.2)}
+.vb-n{background:rgba(224,64,80,.08);color:var(--red);border:1px solid rgba(224,64,80,.15)}
+.vb-z{background:var(--bg2);color:var(--dim);border:1px solid var(--line)}
+
+/* ── flags ── */
+.hc-flags { display:flex; flex-wrap:wrap; gap:4px; padding:7px 13px 0; }
+.flag { font-size:10px; padding:3px 8px; border-radius:5px; background:rgba(232,160,32,.06); border:1px solid rgba(232,160,32,.15); color:var(--amber); }
+
+/* ── scout pick bar ── */
+.pick-bar {
+display:flex; align-items:center; gap:8px;
+margin:8px 13px 0; padding:7px 10px;
+background:rgba(34,204,102,.06); border:1px solid rgba(34,204,102,.14);
+border-radius:8px;
+font-size:12px; font-weight:700; color:var(--green);
+}
+.pick-bar span { opacity:.7; font-weight:400; }
+
+/* bottom padding under last element in card */
+.hc-main-bottom { height:12px; cursor:pointer; }
+
+/* ── expand detail ── */
+.hc-det { display:none; border-top:1px solid var(--line); background:var(--bg2); padding:13px; margin-top:10px; }
+.hc-det.open { display:block; }
+.det-s { margin-bottom:14px; }
+.det-s:last-child { margin-bottom:0; }
+.det-t { font-size:9px; font-weight:700; letter-spacing:2px; color:var(--dim); text-transform:uppercase; margin-bottom:8px; }
+.pg { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
+.pblk { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:9px 10px; }
+.pblk-n { font-size:10px; color:var(--amber); font-weight:700; margin-bottom:5px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.pr { display:flex; justify-content:space-between; font-size:11px; margin-bottom:2px; }
+.pr span:first-child{color:var(--dim)} .pr span:last-child{font-family:'JetBrains Mono',monospace;font-weight:700}
+.st-wrap{overflow-x:auto}
+.st{width:100%;border-collapse:collapse}
+.st th{font-size:8px;font-weight:700;letter-spacing:1px;color:var(--dim);text-align:left;padding:2px 4px;border-bottom:1px solid var(--line)}
+.st td{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--dim);padding:4px;border-bottom:1px solid rgba(255,255,255,.02);white-space:nowrap}
+.st td:first-child{color:var(--text)}
+.p1{color:var(--green)!important;font-weight:700} .p23{color:var(--amber)!important} .pdk{color:var(--red)!important}
+.tb{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.tb-n{font-size:10px;color:var(--dim);width:70px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tb-bg{flex:1;height:5px;background:var(--faint);border-radius:3px;overflow:hidden}
+.tb-f{height:100%;background:var(--amber);border-radius:3px}
+.tb-p{font-family:'JetBrains Mono',monospace;font-size:10px;color:var(--amber);width:34px;text-align:right}
+.zeta{font-size:12px;color:var(--dim);line-height:1.7;font-style:italic;padding:8px 10px;background:rgba(255,255,255,.02);border-radius:6px;border-left:2px solid var(--line2)}
+
+/* ═══════════════════════════════
+BOTTOM NAV  (mobile only)
+═══════════════════════════════ */
+.bnav {
+display:none; position:fixed; bottom:0; left:0; right:0; z-index:500;
+background:#07090d; border-top:1px solid var(--line);
+padding:8px 12px calc(8px + var(--sb));
+}
+.bnav.on { display:block; }
+.bnav-lbl { font-size:9px; font-weight:700; letter-spacing:2px; color:var(--dim); margin-bottom:6px; }
+.bnav-row { display:flex; gap:5px; overflow-x:auto; -webkit-overflow-scrolling:touch; scrollbar-width:none; }
+.bnav-row::-webkit-scrollbar { display:none; }
+.bnp {
+flex-shrink:0; display:flex; flex-direction:column; align-items:center;
+background:var(--card); border:1px solid var(--line);
+border-radius:9px; padding:6px 13px; cursor:pointer; transition:all .12s;
+}
+.bnp.on { background:rgba(232,160,32,.12); border-color:var(--amber2); }
+.bnp-n { font-family:'JetBrains Mono',monospace; font-size:16px; font-weight:700; color:var(--amber); }
+.bnp-d { width:5px; height:5px; border-radius:50%; margin-top:3px; }
+.bpd-g{background:var(--green)} .bpd-a{background:var(--amber)} .bpd-f{background:var(--faint)}
+
+/* ═══════════════════════════════
+DESKTOP SIDEBAR
+═══════════════════════════════ */
+@media(min-width:768px){
+.bnav.on { display:none; }
+#page { padding-bottom:40px; }
+.sys-card { margin:14px 0 0; }
+.dl { display:grid; grid-template-columns:180px 1fr; }
+.dl-sb {
+position:sticky; top:calc(var(--th) + var(--strip));
+height:calc(100vh - var(--th) - var(--strip));
+overflow-y:auto; background:var(--bg2);
+border-right:1px solid var(--line); padding:10px 0;
+}
+.dl-sb::-webkit-scrollbar{width:3px}
+.dl-sb::-webkit-scrollbar-thumb{background:var(--line2)}
+.snav { display:flex; align-items:center; gap:8px; padding:8px 14px; cursor:pointer; border-left:2px solid transparent; border-bottom:1px solid rgba(255,255,255,.025); transition:all .12s; }
+.snav:hover { background:rgba(255,255,255,.02); }
+.snav.on { background:rgba(232,160,32,.06); border-left-color:var(--amber); }
+.snav-n { font-family:'JetBrains Mono',monospace; font-size:16px; font-weight:700; color:var(--amber); min-width:22px; }
+.snav-i { min-width:0; }
+.snav-name { font-size:11px; font-weight:700; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.snav-meta { font-size:9px; color:var(--dim); }
+.snav-b { font-size:8px; font-weight:700; padding:2px 5px; border-radius:3px; }
+.snb-v { background:rgba(34,204,102,.12); color:var(--green); }
+.snb-w { background:rgba(232,160,32,.12); color:var(--amber); }
+.dl-main { padding:0 20px 40px; }
+}
+</style>
+
+</head>
+<body>
+
+<!-- TOPBAR -->
+
+<div class="topbar">
+  <div class="logo">V85 <sup>PRO</sup></div>
+  <div class="tb-search">
+    <input class="tb-input" id="gi" placeholder="V85_2026-03-09_1 eller atg.se-länk">
+    <button class="tb-go" onclick="loadGame()">→</button>
+    <button class="tb-demo" onclick="loadDemo()">Demo</button>
+  </div>
+  <div class="live-dot" id="ldot"></div>
+</div>
+
+<!-- RACE STRIP -->
+
+<div class="rstrip" id="rstrip">
+  <div class="rstrip-inner" id="rstrip-i"></div>
+</div>
+
+<!-- PAGE -->
+
+<div id="page">
+  <!-- EMPTY STATE -->
+  <div id="empty">
+    <div class="ei">🏇</div>
+    <div class="eh">V85 Scout Pro</div>
+    <div class="ep">Klistra in ett V85-ID eller ATG-länk, eller tryck <strong style="color:var(--amber)">Demo</strong> för att se ett komplett exempelspel.</div>
+  </div>
+
+  <!-- OUTPUT -->
+
+  <div id="out" style="display:none">
+    <div id="syswrap"></div>
+    <div class="dl" id="dl">
+      <!-- sidebar injected here by JS on desktop -->
+      <div class="dl-main" id="dlmain"></div>
+    </div>
+  </div>
+</div>
+
+<!-- BOTTOM NAV -->
+
+<div class="bnav" id="bnav">
+  <div class="bnav-lbl">LOPP</div>
+  <div class="bnav-row" id="bnrow"></div>
+</div>
+
+<script>
+/* ═════════════════════════════════════════
+   STATE
+═════════════════════════════════════════ */
+let GD=null, LT=null, AR=1;
+
+/* ═════════════════════════════════════════
+   LOAD
+═════════════════════════════════════════ */
+async function loadGame(){
+  let raw=(document.getElementById('gi').value||'').trim();
+  const m=raw.match(/V8[56]_?\/?(\d{4}-\d{2}-\d{2})_(\d+)/i);
+  if(m) raw=`V85_${m[1]}_${m[2]}`;
+  if(!raw) return;
+  setLoad('Hämtar spelomgång…');
+  try{
+    const r=await fetch(`/api/analyze?game=${encodeURIComponent(raw)}`);
+    if(!r.ok) throw new Error(`Server ${r.status}`);
+    const d=await r.json();
+    if(d.error) throw new Error(d.error);
+    GD=d; render(d);
+    document.getElementById('ldot').classList.add('on');
+    if(LT) clearInterval(LT);
+    LT=setInterval(async()=>{
+      try{ const r2=await fetch(`/api/analyze?game=${encodeURIComponent(raw)}`);
+        const d2=await r2.json(); if(!d2.error){GD=d2;render(d2);} }catch{}
+    },60000);
+  }catch(e){ setErr(e.message); }
+}
+function loadDemo(){
+  setLoad('Laddar demodata…');
+  setTimeout(()=>{ GD=buildDemo(); render(GD); document.getElementById('ldot').classList.remove('on'); },350);
+}
+
+/* ═════════════════════════════════════════
+   RENDER
+═════════════════════════════════════════ */
+function render(data){
+  document.getElementById('empty').style.display='none';
+  document.getElementById('out').style.display='block';
+  document.getElementById('syswrap').innerHTML=renderSys(data);
+  const dm=document.getElementById('dlmain');
+  dm.innerHTML=data.races.map((r,i)=>renderRace(r,i)).join('');
+  renderSidebar(data);
+  renderNavs(data);
+}
+
+/* ─── SYSTEM CARD ─── */
+let currentBudget = 150;
+
+function renderSys(data, budget){
+  budget = budget || currentBudget;
+  const s = calcSys(data.races, budget);
+  const picks = s.picks.map(p=>`
+    <div class="sp-item">
+      <span class="sp-lopp">L${p.lopp}</span>
+      <span class="sp-name">${p.names}</span>
+      <span class="sp-type ${p.isSingel?'spt-s':'spt-g'}">${p.isSingel?'SINGEL':'GARD.'}</span>
+    </div>`).join('');
+  const fillPct = Math.min(100, Math.round(s.rader*0.5/budget*100));
+  const fillColor = fillPct>105?'var(--red)':fillPct>=80?'var(--green)':'var(--amber)';
+  const budgets = [50,100,150,300,500];
+  const btns = budgets.map(b=>`<button class="bbt${b===budget?' bbt-on':''}" onclick="setBudget(${b})">${b}</button>`).join('');
+  return `
+  <div class="sys-card">
+    <div class="sys-head">
+      <div style="flex:1">
+        <div class="sys-title">🏆 Systemförslag</div>
+        <div class="sys-sub">Optimerat mot din budget</div>
+      </div>
+    </div>
+    <div class="sys-body">
+      <div class="budget-row">
+        <span class="budget-lbl">BUDGET</span>
+        <div class="budget-btns">${btns}</div>
+        <span class="budget-cur" style="color:${fillColor}">${s.kr} kr</span>
+      </div>
+      <div class="budget-bar-wrap">
+        <div class="budget-bar-fill" style="width:${fillPct}%;background:${fillColor}"></div>
+      </div>
+      <div class="sys-grid">
+        <div class="sg-cell"><div class="sg-val">${s.rader}</div><div class="sg-lbl">RADER</div></div>
+        <div class="sg-cell"><div class="sg-val" style="color:${fillColor}">${s.kr} kr</div><div class="sg-lbl">KOSTNAD</div></div>
+        <div class="sg-cell"><div class="sg-val" style="color:var(--green)">${s.singlar}S&nbsp;/&nbsp;${s.gard}G</div><div class="sg-lbl">SINGLAR / GARD</div></div>
+      </div>
+      <div class="sys-advice">${s.advice}</div>
+      <div class="sys-picks">${picks}</div>
+    </div>
+  </div>`;
+}
+
+function setBudget(b){
+  currentBudget = b;
+  if(GD) document.getElementById('syswrap').innerHTML = renderSys(GD, b);
+}
+function calcSys(races, budget=150){
+  // Step 1: score each race by how confident we are → determines singel vs gard
+  // Confidence based on: scoutPick count, valueScore, flags
+  const raceScores = races.map(r => {
+    const picks = r.horses.filter(h=>h.scoutPick);
+    const topVS  = Math.max(0, ...r.horses.map(h=>h.valueScore||0));
+    const hasFlags = r.horses.some(h=>(h.flags||[]).length>0);
+    const singlePick = picks.filter(h=>h.scoutPickType==='singel');
+    // Confidence: higher = more likely to singel
+    const conf = (singlePick.length===1 ? 60 : 0)
+               + (picks.length===1 ? 30 : 0)
+               + (topVS > 8 ? 20 : topVS > 4 ? 10 : 0)
+               + (!hasFlags ? 10 : 0);
+    return { r, picks, conf };
+  });
+
+  // Step 2: greedily build system targeting budget
+  // Max rader = floor(budget / 0.5)
+  const maxRader = Math.floor(budget / 0.5);
+
+  // Start with all singlar, then open up lowest-confidence races to 2 horses
+  // Sort by confidence ascending (least confident gets gardering first)
+  const sorted = [...raceScores].sort((a,b) => a.conf - b.conf);
+
+  // Assign initial counts: singel=1 for all
+  const counts = new Map(races.map(r => [r.raceNumber, 1]));
+
+  // Try expanding lowest-confidence races to 2 until budget is hit
+  for(const {r, picks} of sorted){
+    const candidateCount = Math.min(picks.length > 1 ? picks.length : 2, r.horses.length);
+    if(candidateCount <= 1) continue;
+    // What would rader be if we expand this race to candidateCount?
+    const testRader = races.reduce((acc, race) => {
+      const c = race.raceNumber === r.raceNumber ? candidateCount : counts.get(race.raceNumber);
+      return acc * c;
+    }, 1);
+    if(testRader <= maxRader){
+      counts.set(r.raceNumber, candidateCount);
+    }
+  }
+
+  // Step 3: build picks output
+  let rader=1, singlar=0, gard=0;
+  const picks = races.map(r => {
+    const cnt = counts.get(r.raceNumber);
+    rader *= cnt;
+    const isSingel = cnt === 1;
+    isSingel ? singlar++ : gard++;
+    const allPicks = r.horses.filter(h=>h.scoutPick);
+    const displayed = allPicks.length >= cnt
+      ? allPicks.slice(0, cnt)
+      : [...allPicks, ...r.horses.filter(h=>!h.scoutPick)].slice(0, cnt);
+    const names = displayed.map(h=>`${h.nr}.${h.name.split(' ')[0]}`).join(' / ');
+    return { lopp:r.raceNumber, names, isSingel };
+  });
+
+  const kr = (rader * 0.5).toFixed(0);
+  const diff = Math.abs(rader*0.5 - budget);
+  const pct  = Math.round(rader*0.5/budget*100);
+
+  let advice;
+  if(diff <= 10)
+    advice=`<strong>✅ Optimalt system – ${kr} kr (${rader} rader).</strong> Träffar budgeten på ${budget} kr. ${singlar} singlar håller kupong smal, ${gard} gardering${gard!==1?'ar':''} täcker osäkra lopp.`;
+  else if(rader*0.5 < budget)
+    advice=`<strong>System på ${kr} kr (${rader} rader)</strong> – håller dig ${budget-rader*0.5} kr under budget. Du kan öppna upp ett lopp till utan att överskrida ${budget} kr.`;
+  else
+    advice=`<strong>System på ${kr} kr (${rader} rader)</strong> – strax över ${budget} kr. Singla det lopp du är säkrast på för att komma ner.`;
+
+  return{rader, kr, singlar, gard, picks, advice, budget, pct};
+}
+
+/* ─── RACE ─── */
+function renderRace(race, ri){
+  const ins=race.insights;
+  const sp=race.horses.filter(h=>h.scoutPick);
+  const pickPills=sp.map(h=>{
+    const c=h.scoutPickType==='singel'?'spp-s':'spp-g';
+    return `<div class="scout-pick-pill ${c}"><div class="spp-dot"></div>${h.nr}. ${h.name} <span style="opacity:.65;font-size:10px">${(h.scoutPickType||'').toUpperCase()}</span></div>`;
+  }).join('');
+
+  const chips=[];
+  if(ins.likelyFrontRunner) chips.push(`<div class="chip ch-f"><div class="chip-l">SPETS</div><div class="chip-v">${ins.likelyFrontRunner.nr}. ${ins.likelyFrontRunner.name}</div><div class="chip-s">${ins.likelyFrontRunner.reason}</div></div>`);
+  if(ins.topValueHorse) chips.push(`<div class="chip ch-v"><div class="chip-l">VÄRDE</div><div class="chip-v">${ins.topValueHorse.nr}. ${ins.topValueHorse.name} @ ${ins.topValueHorse.odds}</div><div class="chip-s">Hist ${ins.topValueHorse.histWinPct}% · EV +${ins.topValueHorse.valueScore}%</div></div>`);
+  (ins.missedHorses||[]).slice(0,2).forEach(h=>chips.push(`<div class="chip ch-w"><div class="chip-l">MISSAT?</div><div class="chip-v">${h.nr}. ${h.name} @ ${h.odds}</div><div class="chip-s">${h.reason}</div></div>`));
+
+  const mi=race.startMethod==='auto'?'🚗 Auto':'⚡ Volt';
+  const st=race.startTime?new Date(race.startTime).toLocaleTimeString('sv-SE',{hour:'2-digit',minute:'2-digit'}):'';
+
+  return `
+<div class="race" id="race-${ri+1}">
+  <div class="race-hdr">
+    <div class="race-nr">${race.raceNumber}</div>
+    <div class="race-hdr-r">
+      <div class="race-title">${race.name}</div>
+      <div class="race-meta">
+        ${race.track?`<span>📍 ${race.track}</span>`:''}
+        ${race.distance?`<span>📏 ${race.distance}m</span>`:''}
+        <span>${mi}</span>
+        ${st?`<span>🕐 ${st}</span>`:''}
+      </div>
+    </div>
+  </div>
+
+  ${race.scoutAnalysis?`
+  <div class="scout-box">
+    <div class="scout-box-hdr"><span style="font-size:14px">🔍</span><span class="scout-box-lbl">SCOUT-ANALYS</span></div>
+    <div class="scout-box-text">${race.scoutAnalysis}</div>
+    ${pickPills?`<div class="scout-picks-row">${pickPills}</div>`:''}
+  </div>`:''}
+
+  ${chips.length?`<div class="chips">${chips.join('')}</div>`:''}
+
+  <div>${race.horses.map(h=>renderHorse(h,race)).join('')}</div>
+</div>`;
+}
+
+/* ─── HORSE CARD ─── */
+function renderHorse(h, race){
+  const impl=h.winOdds?(100/h.winOdds).toFixed(0)+'%':'–';
+  const fhtml=(h.history?.formStr||'–').split('').map(c=>`<span class="fc-${c}">${c}</span>`).join('');
+  const avgT=h.history?.avgKmTime10;
+  const tr=h.history?.timeTrend;
+  const tc=tr==='improving'?'tr-up':tr==='declining'?'tr-dn':'';
+  const ta=tr==='improving'?'↓':tr==='declining'?'↑':'';
+  const drP=h.driver?.form30?.winPct??null;
+  const trP=h.trainer?.form30?.winPct??null;
+  const vs=h.valueScore;
+  const vb=vs!=null?`<span class="vbadge ${vs>5?'vb-p':vs<-5?'vb-n':'vb-z'}">${vs>=0?'+':''}${vs.toFixed(0)}%</span>`:'';
+  const cls=`${vs>8?'cv':(h.flags||[]).length>0?'cw':''}${h.scoutPick?' picked':''}`;
+  const hid=`hc-${race.raceNumber}-${h.nr}`;
+
+  const pills=[];
+  if(h.history?.formStr) pills.push(`<div class="spill"><span class="sp-l">FORM</span><span class="sp-v">${fhtml}</span></div>`);
+  if(avgT) pills.push(`<div class="spill"><span class="sp-l">KM-TID</span><span class="sp-v ${tc}">${fmtT(avgT)}${ta}</span></div>`);
+  if(h.history?.bestKmTime) pills.push(`<div class="spill"><span class="sp-l">BÄST</span><span class="sp-v">${fmtT(h.history.bestKmTime)}</span></div>`);
+  if(vb) pills.push(`<div class="spill"><span class="sp-l">EV</span>${vb}</div>`);
+
+  const pickBar=h.scoutPick?`<div class="pick-bar">${h.scoutPickType==='singel'?'✅':'🎯'} Scout: ${h.scoutPickType==='singel'?'<strong>SINGEL</strong> – stort förtroende':'<strong>GARDERING</strong> – ta med i system'}</div>`:'';
+
+  return `
+<div class="hcard ${cls}" id="${hid}">
+  <div class="hc-top" onclick="togDet('${hid}')">
+    <div class="hc-nr">${h.nr}</div>
+    <div class="hc-name">${h.name}</div>
+    <div class="hc-odds-col">
+      <div class="hc-odds">${h.winOdds??'–'}</div>
+      <div class="hc-impl">${impl}</div>
+    </div>
+  </div>
+
+  <div class="hc-people" onclick="togDet('${hid}')">
+    <div class="person-block">
+      <div class="person-role-tag prt-driver">KUSK</div>
+      <div class="person-name">${h.driver||'–'}</div>
+      <div class="person-pct-row">
+        ${drP!=null?`<span class="person-pct ${pCls(drP)}">${drP}%</span><span class="person-pct-lbl">30d</span>`:''}
+        ${h.driver?.inForm?`<span class="form-fire">🔥 FORM</span>`:''}
+      </div>
+    </div>
+    <div class="person-block">
+      <div class="person-role-tag prt-trainer">TRÄNARE</div>
+      <div class="person-name">${h.trainer||'–'}</div>
+      <div class="person-pct-row">
+        ${trP!=null?`<span class="person-pct ${pCls(trP)}">${trP}%</span><span class="person-pct-lbl">30d</span>`:''}
+        ${h.trainer?.inForm?`<span class="form-fire">🔥 FORM</span>`:''}
+      </div>
+    </div>
+  </div>
+
+  ${pills.length?`<div class="hc-stats" onclick="togDet('${hid}')">${pills.join('')}</div>`:''}
+  ${(h.flags||[]).length?`<div class="hc-flags">${h.flags.slice(0,3).map(f=>`<span class="flag">${f}</span>`).join('')}</div>`:''}
+  ${pickBar}
+  <div class="hc-main-bottom" onclick="togDet('${hid}')"></div>
+
+  <div class="hc-det" id="det-${hid}">${buildDet(h)}</div>
+</div>`;
+}
+
+function buildDet(h){
+  const parts=[];
+  if(h.history?.recentStarts?.length){
+    parts.push(`<div class="det-s"><div class="det-t">Senaste starter</div>
+      <div class="st-wrap"><table class="st"><thead><tr><th>Datum</th><th>Bana</th><th>Dist</th><th>Pl</th><th>Km</th><th>Odds</th></tr></thead>
+      <tbody>${h.history.recentStarts.slice(0,7).map(s=>{
+        const pc=s.place===1?'p1':s.place<=3?'p23':s.disk?'pdk':'';
+        return `<tr><td>${s.date}</td><td>${s.track||'–'}</td><td>${s.distance||'–'}m</td><td class="${pc}">${s.disk?'D':s.place||'–'}</td><td>${s.kmTimeRaw||'–'}</td><td>${s.odds??'–'}</td></tr>`;
+      }).join('')}</tbody></table></div></div>`);
+  }
+  const pb=[];
+  if(h.driver){const d=h.driver;pb.push(`<div class="pblk"><div class="pblk-n">🎯 ${h.driver.name||'Kusk'}</div>
+    <div class="pr"><span>30 dagar</span><span class="${pCls(d.form30?.winPct)}">${d.form30?.winPct??0}% (${d.form30?.wins??0}/${d.form30?.starts??0})</span></div>
+    <div class="pr"><span>14 dagar</span><span class="${pCls(d.form14?.winPct)}">${d.form14?.winPct??0}%</span></div>
+    ${d.thisYearWinPct?`<div class="pr"><span>Helår</span><span>${d.thisYearWinPct}%</span></div>`:''}
+  </div>`);}
+  if(h.trainer){const t=h.trainer;pb.push(`<div class="pblk"><div class="pblk-n">🏋️ ${h.trainer.name||'Tränare'}</div>
+    <div class="pr"><span>30 dagar</span><span class="${pCls(t.form30?.winPct)}">${t.form30?.winPct??0}% (${t.form30?.wins??0}/${t.form30?.starts??0})</span></div>
+    <div class="pr"><span>14 dagar</span><span class="${pCls(t.form14?.winPct)}">${t.form14?.winPct??0}%</span></div>
+    ${t.thisYearWinPct?`<div class="pr"><span>Helår</span><span>${t.thisYearWinPct}%</span></div>`:''}
+  </div>`);}
+  if(pb.length) parts.push(`<div class="det-s"><div class="det-t">Kusk &amp; Tränare</div><div class="pg">${pb.join('')}</div></div>`);
+  if(h.history?.trackStats?.length){
+    parts.push(`<div class="det-s"><div class="det-t">Banstatistik</div>
+      ${h.history.trackStats.slice(0,4).map(t=>`<div class="tb">
+        <div class="tb-n">${t.track}</div>
+        <div class="tb-bg"><div class="tb-f" style="width:${Math.min(100,t.winPct*2.5)}%"></div></div>
+        <div class="tb-p">${t.winPct}%</div></div>`).join('')}
+    </div>`);
+  }
+  if(h.flags?.length) parts.push(`<div class="det-s"><div class="det-t">Scout-signaler</div>
+    ${h.flags.map(f=>`<div style="font-size:12px;padding:3px 0;color:var(--text)">${f}</div>`).join('')}</div>`);
+  if(h.analysis) parts.push(`<div class="det-s"><div class="det-t">ATG-analys</div><div class="zeta">${h.analysis}</div></div>`);
+  return parts.length?parts.join(''):`<p style="font-size:12px;color:var(--dim);padding:8px 0">Ingen historikdata tillgänglig</p>`;
+}
+
+/* ─── SIDEBAR (desktop) ─── */
+function renderSidebar(data){
+  const dl=document.getElementById('dl');
+  let sb=dl.querySelector('.dl-sb');
+  if(!sb){ sb=document.createElement('div'); sb.className='dl-sb'; dl.insertBefore(sb,document.getElementById('dlmain')); }
+  sb.innerHTML=data.races.map((r,i)=>{
+    const hv=r.insights?.topValueHorse||r.insights?.missedHorses?.length;
+    const hw=r.insights?.likelyFrontRunner;
+    return `<div class="snav ${i===0?'on':''}" id="snav-${i+1}" onclick="jump(${i+1})">
+      <span class="snav-n">${r.raceNumber}</span>
+      <div class="snav-i">
+        <div class="snav-name">${r.name}</div>
+        <div class="snav-meta">${r.distance||''}m · ${r.horses.length}st</div>
+      </div>
+      ${hv?`<span class="snav-b snb-v">V</span>`:hw?`<span class="snav-b snb-w">S</span>`:''}
+    </div>`;
+  }).join('');
+}
+
+/* ─── NAV STRIP + BOTTOM ─── */
+function renderNavs(data){
+  document.getElementById('rstrip-i').innerHTML=data.races.map((r,i)=>{
+    const hv=r.insights?.topValueHorse||r.insights?.missedHorses?.length;
+    const hw=r.insights?.likelyFrontRunner;
+    const pc=hv?'pip-g':hw?'pip-a':'pip-f';
+    return `<div class="rtab ${i===0?'on':''}" id="rtab-${i+1}" onclick="jump(${i+1})">
+      <span class="rtab-n">${r.raceNumber}</span>
+      <div class="rtab-pip ${pc}"></div>
+    </div>`;
+  }).join('');
+  document.getElementById('rstrip').classList.add('on');
+  document.getElementById('page').classList.add('has-strip');
+
+  document.getElementById('bnrow').innerHTML=data.races.map((r,i)=>{
+    const hv=r.insights?.topValueHorse||r.insights?.missedHorses?.length;
+    const hw=r.insights?.likelyFrontRunner;
+    const pc=hv?'bpd-g':hw?'bpd-a':'bpd-f';
+    return `<div class="bnp ${i===0?'on':''}" id="bnp-${i+1}" onclick="jump(${i+1})">
+      <span class="bnp-n">${r.raceNumber}</span>
+      <div class="bnp-d ${pc}"></div>
+    </div>`;
+  }).join('');
+  document.getElementById('bnav').classList.add('on');
+}
+
+/* ─── JUMP + SCROLL TRACKING ─── */
+function jump(n){
+  const el=document.getElementById(`race-${n}`);
+  if(el){
+    const rs=document.getElementById('rstrip');
+    const tb=document.querySelector('.topbar');
+    const off=(tb?.offsetHeight||52)+(rs?.offsetHeight||0)+8;
+    window.scrollTo({top:el.getBoundingClientRect().top+window.scrollY-off,behavior:'smooth'});
+  }
+  setAR(n);
+}
+function setAR(n){
+  AR=n;
+  ['rtab','bnp','snav'].forEach(p=>{
+    document.querySelectorAll(`[id^="${p}-"]`).forEach(e=>e.classList.remove('on'));
+    document.getElementById(`${p}-${n}`)?.classList.add('on');
+  });
+  document.getElementById(`rtab-${n}`)?.scrollIntoView({behavior:'smooth',block:'nearest',inline:'center'});
+}
+let scT;
+window.addEventListener('scroll',()=>{
+  clearTimeout(scT);
+  scT=setTimeout(()=>{
+    if(!GD) return;
+    for(let i=GD.races.length;i>=1;i--){
+      const el=document.getElementById(`race-${i}`);
+      if(el&&el.getBoundingClientRect().top<=120){if(AR!==i)setAR(i);break;}
+    }
+  },80);
+},{passive:true});
+
+function togDet(hid){ document.getElementById(`det-${hid}`)?.classList.toggle('open'); }
+
+/* ─── HELPERS ─── */
+function setLoad(msg){
+  document.getElementById('empty').style.display='flex';
+  document.getElementById('out').style.display='none';
+  document.getElementById('empty').innerHTML=`
+    <div class="ei">⏳</div><div class="eh">${msg}</div>
+    <div class="lbar"><div class="lbar-f"></div></div>
+    <div class="ep" style="font-size:11px">ATG odds · Travsport historik · Kusk &amp; tränarform</div>`;
+}
+function setErr(msg){
+  document.getElementById('empty').style.display='flex';
+  document.getElementById('out').style.display='none';
+  document.getElementById('empty').innerHTML=`<div class="ei">⚠️</div><div class="eh" style="color:var(--red)">Fel</div><div class="ep">${msg}</div>`;
+}
+function fmtT(s){ if(!s)return'–'; const m=Math.floor(s/60),sc=Math.floor(s%60),t=Math.round((s%1)*10); return`${m}.${String(sc).padStart(2,'0')},${t}`; }
+function pCls(p){ if(p==null)return''; return p>=20?'hot':p>=12?'warm':'cold'; }
+
+/* ═════════════════════════════════════════
+   DEMO DATA
+═════════════════════════════════════════ */
+function mh(nr,name,driver,trainer,odds,form,avgKm,bestKm,trend,trP,drP,trF,drF,flags,vs,fs,analysis,pick,pickType){
+  return{
+    nr,name,driver,trainer,winOdds:odds,postPosition:nr,
+    history:{formStr:form,avgKmTime10:avgKm,bestKmTime:bestKm,timeTrend:trend,
+      recentStarts:[
+        {date:'2026-03-02',track:'Jägersro',distance:2140,driver,place:form[0]==='V'?1:form[0]==='P'?2:4,kmTimeRaw:fmtT(avgKm+0.5),odds},
+        {date:'2026-02-22',track:'Solvalla', distance:1640,driver,place:form[1]==='V'?1:3,kmTimeRaw:fmtT(avgKm+1),odds:odds+1},
+        {date:'2026-02-15',track:'Romme',   distance:2140,driver,place:form[2]==='V'?1:6,kmTimeRaw:fmtT(avgKm+0.8),odds:odds+2},
+        {date:'2026-02-08',track:'Jägersro',distance:2140,driver,place:form[3]==='V'?1:5,kmTimeRaw:fmtT(avgKm+1.2),odds:odds+1.5},
+      ],
+      trackStats:[{track:'Jägersro',starts:8,wins:Math.max(0,form.split('V').length-1),winPct:Math.round(Math.max(0,form.split('V').length-1)/8*100)},{track:'Solvalla',starts:5,wins:1,winPct:20}]
+    },
+    trainer:{name:trainer,thisYearWinPct:trP,form30:{starts:22,wins:Math.round(22*trP/100),winPct:trP},form14:{starts:10,wins:Math.round(10*trP/100),winPct:trP},inForm:trF},
+    driver:{name:driver,thisYearWinPct:drP,form30:{starts:30,wins:Math.round(30*drP/100),winPct:drP},form14:{starts:14,wins:Math.round(14*drP/100),winPct:drP},inForm:drF},
+    flags,valueScore:vs,frontRunnerScore:fs,analysis,scoutPick:pick,scoutPickType:pickType
+  };
+}
+
+function buildDemo(){
+  const races=[
+    {raceNumber:1,name:'Klass II – Kallblod',track:'Jägersro',distance:2140,startMethod:'volt',startTime:'2026-03-09T14:15:00',
+     scoutAnalysis:'Lionel Vegas är klar spetsfavorit inifrån spår 1 med Goop i sulkyn. Goop kör aggressivt inifrån och tar täten tidigt. Halo Face vann senast till höga odds – ett tydligt tecken på undervärdering. Scout singlar Vegas men tar med Halo Face som skräll-gardering.',
+     horses:[
+      mh(1,'Lionel Vegas','Björn Goop','Per Söder',3.2,'VPUVP',74.5,72.1,'stable',18,22,false,true,['🏃 Spetshäst – spår 1 + Goop'],4.2,7,'Stark favorit. Goop aggressivt inifrån.',true,'singel'),
+      mh(2,'Quick Casanova','Örjan Kihlström','Anna Berg',5.5,'PVUUP',75.8,73.5,'improving',14,19,false,true,['📈 Förbättrade km-tider','🎯 Kusk i form 19%'],8.1,4,'Förbättring senaste starter.',false,null),
+      mh(3,'Bella Donna H.','Erik Adielsson','Klas Bäckman',8.0,'UUPVP',76.2,74.0,'stable',12,15,false,false,[],2.1,3,'Kan överraska.',false,null),
+      mh(4,'Trix Kronos','Per Lennartsson','Bo Ek',14.0,'UUUUP',78.5,76.2,'declining',9,11,false,false,['⚠️ Kusk i dålig form'],-3.5,2,'Svårt spår.',false,null),
+      mh(5,'Halo Face','André Untersteiner','Maria Sköld',22.0,'VUUUU',77.0,74.8,'stable',11,13,false,false,['⚡ Vann senast – undervärderad'],9.4,1,'Vann oväntat senast.',true,'gardering'),
+     ],
+     insights:{likelyFrontRunner:{nr:1,name:'Lionel Vegas',score:7,reason:'Spår 1 – Volt inifrån'},topValueHorse:{nr:5,name:'Halo Face',valueScore:9.4,odds:22.0,histWinPct:10},missedHorses:[{nr:2,name:'Quick Casanova',odds:5.5,valueScore:8.1,reason:'📈 Km-tider · 🎯 Kusk i form'}],formHorses:[]}
+    },
+    {raceNumber:2,name:'Klass I – Varmblod',track:'Jägersro',distance:1640,startMethod:'auto',startTime:'2026-03-09T14:45:00',
+     scoutAnalysis:'Propulsion är seriens överlägset bästa häst och kör autostart inifrån spår 1 med Björn Goop. Just den kombinationen singlar Scout utan tvekan. Timoko har förbättrande tider och franskt stall i form – värd att notera om odds förbättras.',
+     horses:[
+      mh(1,'Propulsion','Björn Goop','Jerry Riordan',1.9,'VVVVP',72.0,70.8,'stable',24,22,true,true,['🔥 Form-häst VV','🏃 Spetshäst inifrån'],2.1,8,'Dominant inifrån.',true,'singel'),
+      mh(2,'Yarrah Boko','Yannick Gingras','Björn Goop',4.5,'PVPUP',74.2,72.5,'stable',20,18,true,true,[],1.8,4,'Stark tvåa.',false,null),
+      mh(3,'Timoko','Eric Raffin','Jean-Michel Bazire',6.2,'PVUUP',75.0,73.1,'improving',17,21,false,true,['📈 Förbättrade km-tider','🎯 Kusk i form 21%'],6.5,3,'Franskt stall i form.',false,null),
+      mh(4,'Milliondollarrhyme','Erik Adielsson','Charlotte Nordin',9.0,'UUPVV',75.5,73.8,'improving',15,15,false,false,['📈 Förbättrade km-tider'],5.2,2,'Två raka vinster.',false,null),
+      mh(5,'Global Trustworthy','Johan Untersteiner','Stig H. Johansson',14.0,'UUUPU',77.8,75.5,'declining',10,12,false,false,[],-4.2,1,'Tuff uppgift.',false,null),
+     ],
+     insights:{likelyFrontRunner:{nr:1,name:'Propulsion',score:8,reason:'Spår 1 – autostart · Topform'},topValueHorse:{nr:3,name:'Timoko',valueScore:6.5,odds:6.2,histWinPct:12},missedHorses:[{nr:4,name:'Milliondollarrhyme',odds:9,valueScore:5.2,reason:'📈 Km-tider · Två raka vinster'}],formHorses:[]}
+    },
+    {raceNumber:3,name:'Klass III – Sto',track:'Jägersro',distance:2140,startMethod:'volt',startTime:'2026-03-09T15:20:00',
+     scoutAnalysis:'Jämt lopp. Reine De Course är favorit med franskt stall och Raffin i form. Grace Of Mind är dock klart intressant: Gingras kör, km-tider förbättras tydligt och vann senast. På 7.5 är det genuint värde. Scout garderar båda.',
+     horses:[
+      mh(1,'Reine De Course','Eric Raffin','Laurent Baudron',3.2,'VPVUP',73.8,71.9,'stable',19,21,true,true,['🔥 Form-häst'],3.5,7,'Franskt toppstall.',true,'gardering'),
+      mh(2,'Wild Love','André Untersteiner','Maria Sköld',5.1,'PVUVP',74.5,72.8,'stable',14,13,false,false,[],1.2,3,'Jämn.',false,null),
+      mh(3,'Grace Of Mind','Yannick Gingras','Jean-Michel Bazire',7.5,'UUVPV',75.1,73.5,'improving',16,20,false,true,['📈 Förbättrade km-tider','🎯 Gingras i form','⚡ Vann senast'],11.2,2,'Klar trend uppåt.',true,'gardering'),
+      mh(4,'Lovely Joyful','Per Lennartsson','Kristina Söderqvist',11.0,'UUUUV',76.9,75.2,'improving',11,12,false,false,['⚡ Vann senast'],7.8,1,'Vann senast.',false,null),
+      mh(5,'Frida Spets','Björn Goop','Anna-Lena Larsén',25.0,'UUUUU',79.0,77.5,'declining',8,10,false,false,[],-6.2,1,'Lång utomstruts.',false,null),
+     ],
+     insights:{likelyFrontRunner:{nr:1,name:'Reine De Course',score:7,reason:'Spår 1'},topValueHorse:{nr:3,name:'Grace Of Mind',valueScore:11.2,odds:7.5,histWinPct:14},missedHorses:[{nr:3,name:'Grace Of Mind',odds:7.5,valueScore:11.2,reason:'📈 Km-tider · 🎯 Gingras i form'}],formHorses:[]}
+    },
+    {raceNumber:4,name:'Klass I – Autostart',track:'Jägersro',distance:1640,startMethod:'auto',startTime:'2026-03-09T16:00:00',
+     scoutAnalysis:'Bold Eagle har fem raka vinster och kör inifrån med Goop. Det är ett av de tydligaste singellägen i V85:an. Scout singlar direkt.',
+     horses:[
+      mh(1,'Bold Eagle','Björn Goop','Per-Olov Lindqvist',2.2,'VVVVV',71.5,70.2,'stable',26,24,true,true,['🔥 Fem raka vinster','🏃 Spetshäst spår 1'],1.8,9,'Klass I-häst i lägre lopp.',true,'singel'),
+      mh(2,'Scarlet Knight','Eric Raffin','Charlotte Nordin',5.8,'VPVUP',74.0,72.8,'stable',17,21,false,true,[],3.2,4,'Kan utmana.',false,null),
+      mh(3,'Revenue','Yannick Gingras','Jerry Riordan',7.0,'PVUUP',75.2,73.5,'improving',16,18,false,true,['📈 Förbättrade tider'],4.1,3,'Gingras i form.',false,null),
+      mh(4,'Nuncio','Örjan Kihlström','Stig H. Johansson',9.0,'PVPUU',75.8,74.0,'stable',14,15,false,false,[],1.5,2,'Jämn.',false,null),
+      mh(5,'Emotionell','Erik Adielsson','Bo Ek',18.0,'UUUPV',77.5,75.8,'improving',10,12,false,false,['⚡ Vann senast'],6.2,1,'Kom starkt senast.',false,null),
+     ],
+     insights:{likelyFrontRunner:{nr:1,name:'Bold Eagle',score:9,reason:'Spår 1 – autostart · Fem raka'},topValueHorse:null,missedHorses:[],formHorses:[]}
+    },
+    {raceNumber:5,name:'Klass I – Voltstart',track:'Jägersro',distance:2140,startMethod:'volt',startTime:'2026-03-09T16:35:00',
+     scoutAnalysis:'Jämnare lopp. Make It Happen har två raka vinster med Goop i sulkyn och förbättrar sina km-tider. Björn Borg har bäst meriter totalt men börjar i spår 3. Scout garderar båda.',
+     horses:[
+      mh(1,'Cokstile','André Untersteiner','Maria Sköld',6.5,'PVVUP',75.5,73.8,'stable',13,14,false,false,[],2.0,3,'Jämn.',false,null),
+      mh(2,'Make It Happen','Björn Goop','Per Söder',3.3,'VVPUP',73.8,72.0,'improving',18,22,false,true,['🔥 Form-häst VV','🎯 Goop i form'],7.2,5,'Två raka – Goop kör.',true,'gardering'),
+      mh(3,'Björn Borg','Per Lennartsson','Anna Berg',4.2,'PVVUP',74.2,72.5,'stable',15,16,false,false,[],3.8,4,'Bästa meriter men yttre spår.',true,'gardering'),
+      mh(4,'Chablis','Erik Adielsson','Klas Bäckman',9.0,'UUPVV',76.0,74.5,'improving',12,13,false,false,['📈 Förbättrade tider'],4.5,2,'Trend uppåt.',false,null),
+      mh(5,'D.D. Mearas','Johan Untersteiner','Bo Ek',14.0,'UUUPU',78.0,76.2,'declining',10,11,false,false,[],-2.1,1,'Svårt.',false,null),
+     ],
+     insights:{likelyFrontRunner:{nr:2,name:'Make It Happen',score:5,reason:'Goop – aggressiv taktik'},topValueHorse:{nr:2,name:'Make It Happen',valueScore:7.2,odds:3.3,histWinPct:20},missedHorses:[],formHorses:[]}
+    },
+    {raceNumber:6,name:'Klass II – Autostart',track:'Jägersro',distance:1640,startMethod:'auto',startTime:'2026-03-09T17:10:00',
+     scoutAnalysis:'Solide AS kör med Kihlström inifrån spår 2 – klassisk taktisk fördel på autostart. Kihlström är het just nu med 20% vinst senaste 30 dagarna. Scout singlar.',
+     horses:[
+      mh(1,'Dreamy Winner','André Untersteiner','Maria Sköld',8.5,'PUPUV',76.5,74.8,'stable',11,12,false,false,[],2.3,2,'Oklar form.',false,null),
+      mh(2,'Solide AS','Örjan Kihlström','Laurent Baudron',4.5,'PVVUP',74.5,72.9,'stable',17,20,false,true,['🏃 Spets spår 2 auto','🎯 Kihlström i form 20%'],5.8,7,'Kihlström inifrån – farlig.',true,'singel'),
+      mh(3,'Nuncio II','Erik Adielsson','Charlotte Nordin',7.0,'PVUPP',75.8,74.0,'stable',13,14,false,false,[],2.1,3,'Stabil.',false,null),
+      mh(4,'Revenue II','Yannick Gingras','Jerry Riordan',9.0,'UUPVP',76.0,74.2,'improving',16,18,false,true,['📈 Förbättrade tider'],4.2,3,'Gingras i form.',false,null),
+      mh(5,'Ringostarr Treb','Per Lennartsson','Per Söder',12.0,'VUUPU',75.0,72.5,'declining',12,13,false,false,['⚡ Bästa km-tid i fältet'],3.5,1,'Snabb men svårt spår.',false,null),
+     ],
+     insights:{likelyFrontRunner:{nr:2,name:'Solide AS',score:7,reason:'Spår 2 – auto · Kihlström'},topValueHorse:{nr:2,name:'Solide AS',valueScore:5.8,odds:4.5,histWinPct:17},missedHorses:[],formHorses:[]}
+    },
+    {raceNumber:7,name:'Klass III',track:'Jägersro',distance:2140,startMethod:'volt',startTime:'2026-03-09T17:45:00',
+     scoutAnalysis:'Great Challenger kör med Gingras som är hetaste kusken på banan just nu (24% senaste 30 dagarna). Franskt Bazire-stall i toppform. Scout singlar.',
+     horses:[
+      mh(1,'Great Challenger','Yannick Gingras','Jean-Michel Bazire',5.0,'VPUVP',74.8,73.0,'stable',22,24,true,true,['🔥 Form-häst','🎯 Gingras i form 24%'],5.5,6,'Franskt stall. Gingras het.',true,'singel'),
+      mh(2,'Windsong Soprano','Eric Raffin','Laurent Baudron',3.8,'VVPUP',73.5,71.8,'stable',19,21,true,true,[],2.8,4,'Bättre meriter men spår 2.',false,null),
+      mh(3,'Muscle Mass','Björn Goop','Jerry Riordan',2.5,'PVVVP',72.8,71.2,'stable',20,22,true,true,[],1.2,5,'Låga odds.',false,null),
+      mh(4,'Inti','Erik Adielsson','Klas Bäckman',8.0,'UUPVV',76.2,74.5,'improving',13,14,false,false,['📈 Förbättrade tider'],4.8,2,'Förbättrar.',false,null),
+      mh(5,'Dealer','Per Lennartsson','Bo Ek',12.0,'UUUPU',78.0,76.0,'declining',10,11,false,false,[],-3.2,1,'Svårt.',false,null),
+     ],
+     insights:{likelyFrontRunner:{nr:3,name:'Muscle Mass',score:5,reason:'Goop kör – tar täten'},topValueHorse:{nr:1,name:'Great Challenger',valueScore:5.5,odds:5.0,histWinPct:16},missedHorses:[],formHorses:[]}
+    },
+    {raceNumber:8,name:'Klass I – Final',track:'Jägersro',distance:2140,startMethod:'volt',startTime:'2026-03-09T18:20:00',
+     scoutAnalysis:'Milliondollarrhyme II har förbättrat sina km-tider tre starter i rad – det starkaste formtecknet i hela V85:an. Goop kör och Riordan-stallet är i form. Readly Express är favorit men odds på 2.1 ger litet värde. Scout singlar Milliondollarrhyme som en värdeskräll.',
+     horses:[
+      mh(1,'Milliondollarrhyme II','Björn Goop','Jerry Riordan',6.5,'PVVVP',73.2,71.5,'improving',20,22,true,true,['📈 Tre raka förbättringar','🔥 Stall i form','🎯 Goop kör'],10.5,4,'Hetast i form.',true,'singel'),
+      mh(2,'Readly Express','Erik Adielsson','Charlotte Nordin',2.1,'VVPVP',72.0,70.8,'stable',18,20,false,true,[],0.8,5,'Klass-favorit.',false,null),
+      mh(3,'Maharajah','Örjan Kihlström','Stig H. Johansson',5.0,'PVPVV',73.8,72.2,'stable',17,19,false,true,[],3.2,4,'Jämn.',false,null),
+      mh(4,'Back In Town','Per Lennartsson','Anna Berg',14.0,'UUUPV',77.0,75.5,'improving',11,12,false,false,['⚡ Vann senast'],5.8,2,'Kom starkt senast.',false,null),
+      mh(5,'Ringler','André Untersteiner','Bo Ek',20.0,'UUUUU',79.5,77.8,'declining',8,9,false,false,[],-5.2,1,'Svårt.',false,null),
+     ],
+     insights:{likelyFrontRunner:{nr:2,name:'Readly Express',score:5,reason:'Favorit – tar täten'},topValueHorse:{nr:1,name:'Milliondollarrhyme II',valueScore:10.5,odds:6.5,histWinPct:18},missedHorses:[{nr:1,name:'Milliondollarrhyme II',odds:6.5,valueScore:10.5,reason:'📈 Tre raka förbättringar · 🎯 Goop kör'}],formHorses:[]}
+    },
+  ];
+  return{gameId:'V85_2026-03-09_1 (DEMO)',track:'Jägersro',date:'2026-03-09',races,fetchedAt:new Date().toISOString()};
+}
+
+document.getElementById('gi').addEventListener('keydown',e=>{ if(e.key==='Enter') loadGame(); });
+</script>
+
+</body>
+</html>
